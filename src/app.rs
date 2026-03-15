@@ -9,14 +9,20 @@ pub async fn run(cli: Cli) -> Result<(), TnavError> {
     let Cli { global, command } = cli;
 
     match command {
-        Command::Init => commands::init::run(&global).await,
-        Command::Auth(auth_command) => commands::auth::run(auth_command, &global).await,
-        Command::Doctor => commands::doctor::run(&global).await,
-        Command::Config(command) => commands::unsupported(&format!("config {command:?}")),
-        Command::Profile(command) => commands::unsupported(&format!("profile {command:?}")),
-        Command::Version => {
+        Some(Command::Init) => commands::init::run(&global).await,
+        Some(Command::Connect) => commands::ask::run_connect(&global).await,
+        Some(Command::Model(args)) => {
+            commands::ask::run_model(&global, args.model.as_deref()).await
+        }
+        Some(Command::Auth(auth_command)) => commands::auth::run(auth_command, &global).await,
+        Some(Command::Doctor) => commands::doctor::run(&global).await,
+        Some(Command::Config(command)) => commands::unsupported(&format!("config {command:?}")),
+        Some(Command::Profile(command)) => commands::unsupported(&format!("profile {command:?}")),
+        Some(Command::Version) => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        Some(Command::Prompt(parts)) => commands::ask::run(&global, Some(&parts.join(" "))).await,
+        None => commands::ask::run(&global, None).await,
     }
 }

@@ -1,3 +1,4 @@
+mod llm;
 mod load;
 mod model;
 mod paths;
@@ -5,6 +6,7 @@ mod save;
 
 use std::path::PathBuf;
 
+pub use llm::{LLM_CONFIG_FILE_NAME, llm_config_path, load_llm_config, save_llm_config};
 pub use load::{load, load_from_path, load_optional, parse};
 pub use model::{AuthMethod, Config, ProfileConfig, UiConfig};
 pub use paths::{

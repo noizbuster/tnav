@@ -16,7 +16,7 @@ pub fn can_open_browser() -> bool {
 
 pub fn can_bind_localhost(host: &str) -> Result<(), String> {
     TcpListener::bind((host, 0))
-        .map(|listener| drop(listener))
+        .map(drop)
         .map_err(|error| error.to_string())
 }
 

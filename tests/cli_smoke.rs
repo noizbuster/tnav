@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use tempfile::tempdir;
+
 fn tnav_command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tnav"))
 }
@@ -16,7 +18,8 @@ fn root_help_prints_usage() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Interactive terminal navigation scaffold"));
     assert!(stdout.contains("Usage:"));
-    assert!(stdout.contains("tnav [OPTIONS] <COMMAND>"));
+    assert!(stdout.contains("Usage:"));
+    assert!(stdout.contains("tnav [OPTIONS] [COMMAND]"));
 }
 
 #[test]
@@ -33,15 +36,19 @@ fn version_subcommand_prints_package_version() {
 }
 
 #[test]
-fn invalid_subcommand_exits_with_clap_error() {
+fn bare_words_are_joined_as_prompt_flow() {
+    let temp = tempdir().expect("tempdir");
+
     let output = tnav_command()
-        .arg("bogus")
+        .arg("show")
+        .arg("current")
+        .arg("directory")
+        .env("XDG_CONFIG_HOME", temp.path())
         .output()
-        .expect("invalid command runs");
+        .expect("question flow runs");
 
     assert!(!output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unrecognized subcommand 'bogus'"));
-    assert!(stderr.contains("Usage:"));
+    assert!(stderr.contains("run 'tnav connect' first"));
 }

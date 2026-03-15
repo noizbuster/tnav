@@ -1,5 +1,7 @@
+pub mod ask;
 pub mod auth;
 pub mod doctor;
+pub mod executor;
 pub mod init;
 
 use crate::auth::AuthError;
@@ -100,10 +102,10 @@ pub(crate) fn resolve_profile_name(
         return Ok(active_profile.to_owned());
     }
 
-    if config.profiles.len() == 1 {
-        if let Some((profile_name, _)) = config.profiles.iter().next() {
-            return Ok(profile_name.clone());
-        }
+    if config.profiles.len() == 1
+        && let Some((profile_name, _)) = config.profiles.iter().next()
+    {
+        return Ok(profile_name.clone());
     }
 
     if non_interactive {

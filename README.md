@@ -1,278 +1,325 @@
+<img src="banner.png" alt="tnav banner" width="100%">
+
 # tnav
 
-`tnav` is a Rust CLI scaffold for interactive local authentication setup and checks.
+`tnav` is a Rust CLI that currently combines two working areas:
 
-Current behavior is intentionally narrow. The implemented flows cover project init,
-API key storage, browser-based OAuth login, and environment diagnostics.
+- interactive profile and authentication setup for API-key and OAuth-backed services
+- LLM-backed shell command generation from natural-language prompts
 
-## What `tnav` supports today
+The project is still early-stage, but the implemented flows are real: guided profile setup,
+secure secret storage, browser-based OAuth login, environment diagnostics, LLM provider
+management, model selection, and prompt-driven shell command execution.
+
+## Implementation status
+
+Implemented today:
 
 - `init`
 - `auth api-key`
 - `auth login`
 - `doctor`
-- `version`
+- `connect`
+- `model [MODEL]`
+- bare prompt input such as `tnav show current directory`
+- plain `tnav` interactive prompt mode
 
-The remaining command groups exist in the parser but return a clear unsupported
-error message in this phase:
+Command groups that parse but still return an unsupported message:
 
-- `config`
-- `profile`
+- `config show`, `config set`, `config path`, `config reset`
+- `profile list`, `profile add`, `profile remove`, `profile use`
 - `auth logout`, `auth status`, `auth revoke`
 
-## Supported platforms
+## Supported LLM providers
 
-Release packaging targets are configured for these architectures:
+`tnav connect` currently supports named provider instances for:
+
+- `ollama` (default base URL: `http://localhost:11434`)
+- `openai` (default base URL: `https://api.openai.com/v1`)
+- `openai-compatible` (default base URL: `http://localhost:1234`)
+
+The OpenAI-compatible path matches local servers such as LM Studio that expose the
+OpenAI-style `/v1` API.
+
+## Supported release targets
+
+Release packaging is configured for:
 
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
 
-These map to Linux and macOS binaries and a release shell installer.
+These map to Linux and macOS binaries plus a release installer script generated through
+`cargo-dist`.
 
-## Install
+## Quick start
 
-Install from the latest GitHub release with:
+### Install from the latest GitHub release
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/noizbuster/tnav/releases/latest/download/tnav-installer.sh | sh
 ```
 
-The workflow builds per target artifacts, publishes checksums, and includes the
-`tnav-installer.sh` shell installer asset through `cargo-dist`.
-
-## Local build and verification commands
-
-Use these from the repository root:
-
-```bash
-cargo fmt
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-cargo run -- --help
-cargo run -- init
-```
-
-If you run all of them in your environment, they should match the development
-intended behavior. In some environments, external toolchain prerequisites can still
-block `cargo test` and `cargo check`.
-
-## Developer Guide
-
-This section covers the setup required for contributing to `tnav` development.
-
-### Prerequisites
-
-#### Rust Toolchain
-
-Install Rust using `rustup`:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-After installation, ensure you have the stable toolchain:
-
-```bash
-rustup default stable
-rustup update
-```
-
-#### C Compiler (`cc`)
-
-A C compiler is required for building some native dependencies (e.g., `ring` for TLS).
-
-**Linux (Debian/Ubuntu):**
-
-```bash
-sudo apt update
-sudo apt install build-essential
-```
-
-**Linux (Fedora/RHEL/CentOS):**
-
-```bash
-sudo dnf install gcc
-# or on older systems:
-sudo yum install gcc
-```
-
-**Linux (Arch Linux):**
-
-```bash
-sudo pacman -S gcc
-```
-
-**macOS:**
-
-On macOS, `cc` is provided by Xcode Command Line Tools:
-
-```bash
-xcode-select --install
-```
-
-This will install `clang` which is symlinked as `cc`.
-
-Verify your C compiler installation:
-
-```bash
-cc --version
-```
-
-#### rust-analyzer (IDE Support)
-
-`rust-analyzer` provides IDE features like autocompletion, go to definition, and inline errors.
-
-**VS Code:**
-
-1. Open the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X`)
-2. Search for "rust-analyzer"
-3. Click Install
-
-Alternatively, install via command line:
-
-```bash
-code --install-extension rust-lang.rust-analyzer
-```
-
-**Other Editors:**
-
-- **Neovim/Vim**: Use `nvim-lspconfig` or `coc.nvim` with rust-analyzer
-- **Emacs**: Use `lsp-mode` or `eglot` with rust-analyzer
-- **Helix**: Built-in LSP support, ensure `rust-analyzer` is in PATH
-
-Install `rust-analyzer` binary manually (if needed):
-
-```bash
-rustup component add rust-analyzer
-```
-
-Or download the latest binary from the [rust-analyzer releases page](https://github.com/rust-lang/rust-analyzer/releases).
-
-### Development Workflow
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/noizbuster/tnav.git
-cd tnav
-```
-
-2. Build the project:
+### Build from source
 
 ```bash
 cargo build
 ```
 
-3. Run tests:
+### LLM command flow
 
 ```bash
-cargo test
+tnav connect
+tnav model
+tnav show current directory
+tnav
 ```
 
-4. Run linting:
+- `tnav connect` adds or manages an LLM provider instance.
+- `tnav model` selects a model for the active provider. If you pass a value, it saves that model directly; if you omit it, `tnav` queries the provider and prompts you to choose.
+- `tnav show current directory` sends a natural-language request to the configured LLM.
+- Plain `tnav` opens an interactive prompt for the request text.
+
+In interactive mode, plain `tnav` can guide you into `connect` and `model` setup automatically if nothing is configured yet.
+
+### Auth/profile flow
 
 ```bash
-cargo clippy --all-targets --all-features -- -D warnings
-cargo fmt --check
-```
-
-5. Run the CLI locally:
-
-```bash
-cargo run -- --help
-```
-
-## Current command usage
-
-```bash
-tnav --help
 tnav init
-tnav auth api-key
 tnav auth login
 tnav doctor
-tnav version
 ```
 
-`init` writes non-secret config and can save an API key into the secret store.
-`auth login` starts the OAuth flow for OAuth profiles and saves token data.
-`doctor` runs quick health checks for config, browser capability, local callback
-ability, keyring access, and stored auth state.
+Typical usage:
 
-## Config storage
+- run `tnav init` to create a saved profile
+- if the profile uses OAuth, finish sign-in with `tnav auth login`
+- if the profile uses API keys, `init` can capture one immediately and `tnav auth api-key` can replace it later
+- run `tnav doctor` to confirm config, keyring access, browser capability, localhost callback binding, and current auth state
 
-`tnav` writes non-secret configuration to a `config.toml` file resolved with the
-`directories` crate under the `com/noizbuster/tnav` project scope.
+## Command guide
 
-The config model contains:
+### `tnav init`
+
+`init` is an interactive wizard that writes profile config to `config.toml` and can store a secret in the system keyring.
+
+The wizard currently supports these setup paths:
+
+- API key only
+- OAuth only
+- both OAuth and API key
+
+Provider choices exposed by the wizard today:
+
+- API key profiles: OpenAI, Anthropic, or a custom provider name/base URL
+- OAuth profiles: GitHub or a fully custom OAuth provider
+
+For custom OAuth providers, the wizard prompts for:
+
+- provider name
+- optional base URL
+- OAuth client ID
+- authorization URL
+- token URL
+- optional revocation URL
+- default scopes
+- redirect host and redirect path
+- whether the browser should open automatically during login
+
+### `tnav auth api-key`
+
+Stores or replaces an API key for the selected profile in secure storage. If a key already exists, `tnav` asks before overwriting unless `--yes` is provided.
+
+### `tnav auth login`
+
+Runs a PKCE-based OAuth authorization-code flow for OAuth profiles:
+
+1. load the selected profile
+2. validate provider configuration
+3. start a localhost callback server on a loopback address and ephemeral port
+4. build the authorization URL with PKCE and CSRF state
+5. open the browser automatically, or print the URL when browser launch is disabled or fails
+6. wait for the callback
+7. exchange the authorization code for tokens
+8. store token data and metadata in the system keyring
+
+OAuth redirect hosts are validated as loopback-only values such as `127.0.0.1`, `localhost`, or `::1`.
+
+### `tnav doctor`
+
+`doctor` checks the current environment and selected profile state. The implemented checks include:
+
+- whether profile config exists and loads
+- whether the system keyring is reachable
+- whether a browser opener appears to be available
+- whether `tnav` can bind a localhost callback socket
+- whether the active or requested profile resolves correctly
+- whether the expected API key or OAuth token is present
+- whether stored OAuth metadata indicates an expired token
+
+### `tnav connect`
+
+`connect` manages `llm.toml` through an interactive menu. The current flow can:
+
+- add a new provider instance
+- connect an existing provider instance
+- edit a provider instance name or base URL
+- replace the stored OpenAI API key for an OpenAI instance
+- delete a provider instance
+
+Multiple instances of the same provider type are supported through unique saved names.
+
+### `tnav model [MODEL]`
+
+Sets the model for the active LLM provider.
+
+- with an argument: saves that model name directly
+- without an argument: calls the active provider's model-list endpoint and prompts you to choose
+
+### Prompt flow: `tnav <request>` or plain `tnav`
+
+The prompt flow currently does all of the following:
+
+- builds an LLM request that includes shell, OS, OS version, and architecture context
+- asks the configured provider for shell code
+- streams the response in interactive mode when the provider supports streaming
+- shows a command preview
+- lets you execute, edit, or cancel
+- executes approved commands via `sh -c`
+
+If no LLM provider or model is configured, interactive prompt mode can bootstrap you into `tnav connect` and `tnav model` first.
+
+## Configuration and secret storage
+
+`tnav` intentionally separates non-secret config from secrets.
+
+### `config.toml`
+
+Profile/auth configuration is stored in `config.toml`, resolved through the `directories` crate under the `com/noizbuster/tnav` app identity.
+
+Current contents include:
 
 - active profile name
-- per-profile settings such as provider, auth method, OAuth endpoints, scopes,
-  and redirect host/path
-- no API keys or tokens
+- per-profile provider name
+- auth method (`api_key` or `oauth`)
+- optional base URL
+- default scopes
+- OAuth endpoints and client ID
+- redirect host and redirect path
+- UI preference for automatic browser opening
 
-The configuration is serialized as TOML and saved with restrictive permissions
-where supported (`0600` for files on Unix).
+Commands that operate on this file honor `--config`.
 
-## Secret storage
+### `llm.toml`
 
-Secrets are intentionally separated from config and stored via `keyring`:
+LLM connection state is stored separately in `llm.toml` in the standard config directory.
 
-- API key secrets
+Current contents include:
+
+- active LLM provider instance name
+- list of configured provider instances
+- provider kind
+- saved model name
+- optional custom base URL
+- request timeout value
+
+The current implementation loads and saves `llm.toml` from the standard config location; there is no separate CLI flag to override it.
+
+### Secure secret storage
+
+Secrets are stored via the system keyring using the `tnav` service name.
+
+Stored secret types include:
+
+- profile API keys
 - OAuth access tokens
 - OAuth refresh tokens
-- OAuth metadata used for expiry checks
+- OAuth token metadata used for expiry checks
+- OpenAI provider API keys for `tnav connect`
 
-The keyring service name is `tnav`, with account labels based on profile and
-secret kind. If keyring is unavailable, related commands return a clear error and
-`doctor` marks this as an issue.
+On Unix, config directories are created with `0700` permissions and config files with `0600` permissions where supported.
 
-## OAuth login flow at a high level
+## Current interactive/non-interactive behavior
 
-For OAuth profiles, `tnav auth login` follows this sequence:
+The CLI has partial non-interactive support in the current implementation.
 
-1. Load profile from config
-2. Validate provider config
-3. Start a localhost callback server on loopback host and a random port
-4. Build authorization URL with PKCE verifier/challenge and CSRF state
-5. Open the authorization URL in the browser
-6. Receive the callback and validate CSRF state
-7. Exchange the authorization code for tokens
-8. Persist token set metadata in secure storage
-
-The redirect URI uses the configured loopback host and path plus the selected
-ephemeral port.
+- `tnav init` requires interactive answers
+- `tnav auth api-key` requires an interactive key prompt
+- `tnav connect` is currently interactive
+- `tnav model some-model` can be used directly if a provider is already configured
+- `tnav <request>` can run non-interactively when provider and model are already configured
+- plain `tnav` requires interactive prompt entry
 
 ## Troubleshooting
 
-For command-line install and auth issues, start with `tnav doctor` and then apply
-the specific fixes below.
+### Browser did not open during OAuth login
 
-### Browser did not open
+- rerun with `--no-browser` to print the authorization URL instead
+- install a browser opener utility on Linux or set `BROWSER`
+- complete the browser step on the same machine because the callback listener is local
 
-- If CLI output shows manual URL instructions, copy and open the URL in a browser.
-- Install a browser opener utility on Linux (`xdg-open`, `gio`, `sensible-browser`,
-  etc.), or set `BROWSER` in the environment so `tnav` can attempt a launch.
-- You must complete the browser step on the same machine where `tnav` is running, because the callback listener is local (`127.0.0.1`).
+### Keyring errors
 
-### Keyring unavailable (Linux session)
+- rerun `tnav doctor`
+- verify your desktop/session keyring is available
+- API key storage, OAuth login, and OpenAI provider auth depend on working keyring access
 
-- Re-run `tnav doctor` to confirm keyring availability.
-- Re-run after fixing keyring service/tooling permissions.
-- `auth api-key` and `auth login` require working secret storage for success.
+### `run 'tnav connect' first` or `run 'tnav model' first`
 
-### Localhost callback blocked or port bind failure
+- run `tnav connect` to create an LLM provider instance
+- run `tnav model` to save a model for the active provider
+- retry the prompt request after both steps succeed
 
-- Confirm no local firewall or security policy blocks `127.0.0.1` loopback bind.
-- Retry with a different session that can open a localhost listener.
-- If this keeps failing, inspect local environment restrictions on ephemeral
-  loopback ports and temporary socket binds.
+### OAuth callback timeout or bind failure
 
-### Token expired or revoked
+- confirm loopback networking is allowed on the current machine
+- retry in an environment that can bind localhost sockets
+- verify the configured redirect host is still a loopback address
 
-- `doctor` reports token state as `expired` or `missing` when metadata shows stale
-  state.
-- Re-run `tnav auth login` to mint a fresh token.
-- If a provider supports token revocation, rerun OAuth login to re-authorize from
-  scratch.
+## Developer guide
+
+### Prerequisites
+
+- Rust stable toolchain
+- a working C compiler (`cc`) for native dependencies
+
+Install Rust with `rustup` if needed:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup default stable
+rustup update
+```
+
+### Local verification commands
+
+These match the current CI workflow:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+cargo check --all-features
+```
+
+Useful local commands while developing:
+
+```bash
+cargo run -- --help
+cargo run -- doctor
+cargo run -- connect
+cargo run -- model
+```
+
+### CI and releases
+
+- CI runs format, clippy, tests, and `cargo check`
+- tagged releases use `cargo-dist`
+- release assets include per-target archives, checksums, and a shell installer
+
+---
+
+<p align="center">
+  <strong>Supervised by NoizBuster, Written by OpenCode</strong>
+</p>

@@ -11,7 +11,7 @@ pub struct Cli {
     #[command(flatten)]
     pub global: GlobalArgs,
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 impl Cli {
@@ -27,6 +27,8 @@ impl Cli {
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
     Init,
+    Connect,
+    Model(ModelArgs),
     #[command(subcommand)]
     Auth(AuthCommand),
     #[command(subcommand)]
@@ -35,6 +37,8 @@ pub enum Command {
     Profile(ProfileCommand),
     Doctor,
     Version,
+    #[command(external_subcommand)]
+    Prompt(Vec<String>),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -64,6 +68,12 @@ pub enum ProfileCommand {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct ModelArgs {
+    #[arg(value_name = "MODEL")]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct GlobalArgs {
     #[arg(long)]
     pub profile: Option<String>,
@@ -81,4 +91,53 @@ pub struct GlobalArgs {
     pub yes: bool,
     #[arg(long)]
     pub non_interactive: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn external_words_become_prompt_command() {
+        let cli = Cli::parse_from(["tnav", "show", "current", "directory"]);
+
+        match cli.command {
+            Some(Command::Prompt(parts)) => {
+                assert_eq!(parts, vec!["show", "current", "directory"]);
+            }
+            other => panic!("expected prompt fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn known_subcommand_still_parses_as_subcommand() {
+        let cli = Cli::parse_from(["tnav", "doctor"]);
+
+        assert!(matches!(cli.command, Some(Command::Doctor)));
+    }
+
+    #[test]
+    fn connect_parses_as_real_subcommand() {
+        let cli = Cli::parse_from(["tnav", "connect"]);
+
+        assert!(matches!(cli.command, Some(Command::Connect)));
+    }
+
+    #[test]
+    fn model_parses_as_real_subcommand() {
+        let cli = Cli::parse_from(["tnav", "model", "llama3.2"]);
+
+        match cli.command {
+            Some(Command::Model(args)) => assert_eq!(args.model.as_deref(), Some("llama3.2")),
+            other => panic!("expected model subcommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plain_tnav_has_no_command() {
+        let cli = Cli::parse_from(["tnav"]);
+
+        assert!(cli.command.is_none());
+    }
 }

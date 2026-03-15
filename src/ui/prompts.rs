@@ -1,12 +1,35 @@
 use std::collections::{HashSet, VecDeque};
+use std::env;
 use std::fmt::{self, Display};
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::process::Command as ProcessCommand;
 
 use inquire::error::InquireError;
 use inquire::validator::Validation;
 use inquire::{Confirm, MultiSelect, Password, Select, Text};
+use tempfile::Builder;
 use thiserror::Error;
 
 pub type PromptResult<T> = Result<T, PromptError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmResult {
+    Execute,
+    Edit,
+    Cancel,
+}
+
+impl Display for ConfirmResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Execute => f.write_str("Execute"),
+            Self::Edit => f.write_str("Edit"),
+            Self::Cancel => f.write_str("Cancel"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PromptError {
@@ -62,6 +85,7 @@ impl Display for PromptOption {
 pub trait PromptService {
     fn prompt_profile_name(&mut self, default: Option<&str>) -> PromptResult<String>;
     fn prompt_api_key(&mut self) -> PromptResult<String>;
+    fn prompt_command_request(&mut self) -> PromptResult<String>;
     fn select_provider(&mut self, providers: &[PromptOption]) -> PromptResult<String>;
     fn multiselect_scopes(
         &mut self,
@@ -69,6 +93,8 @@ pub trait PromptService {
         defaults: &[String],
     ) -> PromptResult<Vec<String>>;
     fn confirm_overwrite(&mut self, target: &str) -> PromptResult<bool>;
+    fn confirm_execute_command(&mut self, command: &str) -> PromptResult<ConfirmResult>;
+    fn edit_command(&mut self, command: &str) -> PromptResult<String>;
 }
 
 pub fn prompt_profile_name(
@@ -80,6 +106,10 @@ pub fn prompt_profile_name(
 
 pub fn prompt_api_key(prompts: &mut impl PromptService) -> PromptResult<String> {
     prompts.prompt_api_key()
+}
+
+pub fn prompt_command_request(prompts: &mut impl PromptService) -> PromptResult<String> {
+    prompts.prompt_command_request()
 }
 
 pub fn select_provider(
@@ -99,6 +129,17 @@ pub fn multiselect_scopes(
 
 pub fn confirm_overwrite(prompts: &mut impl PromptService, target: &str) -> PromptResult<bool> {
     prompts.confirm_overwrite(target)
+}
+
+pub fn confirm_execute_command(
+    prompts: &mut impl PromptService,
+    command: &str,
+) -> PromptResult<ConfirmResult> {
+    prompts.confirm_execute_command(command)
+}
+
+pub fn edit_command(prompts: &mut impl PromptService, command: &str) -> PromptResult<String> {
+    prompts.edit_command(command)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -137,6 +178,19 @@ impl PromptService for InquirePromptService {
         map_prompt_result(
             "api key",
             prompt.prompt().map(|value| normalize_secret_value(&value)),
+        )
+    }
+
+    fn prompt_command_request(&mut self) -> PromptResult<String> {
+        let prompt = Text::new("Prompt:")
+            .with_help_message("Describe what shell command you want tnav to generate.")
+            .with_validator(command_request_validator);
+
+        map_prompt_result(
+            "prompt request",
+            prompt
+                .prompt()
+                .map(|value| normalize_command_request(&value)),
         )
     }
 
@@ -195,15 +249,35 @@ impl PromptService for InquirePromptService {
 
         map_prompt_result("overwrite confirmation", prompt.prompt())
     }
+
+    fn confirm_execute_command(&mut self, _command: &str) -> PromptResult<ConfirmResult> {
+        let options = vec![
+            ConfirmResult::Execute,
+            ConfirmResult::Edit,
+            ConfirmResult::Cancel,
+        ];
+        let prompt = Select::new("Action:", options)
+            .with_help_message("Use the generated shell code shown above.")
+            .without_filtering();
+
+        map_prompt_result("command confirmation", prompt.prompt())
+    }
+
+    fn edit_command(&mut self, command: &str) -> PromptResult<String> {
+        edit_command_in_editor(command)
+    }
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct ScriptedPromptService {
     profile_names: VecDeque<PromptResult<String>>,
     api_keys: VecDeque<PromptResult<String>>,
+    command_requests: VecDeque<PromptResult<String>>,
     providers: VecDeque<PromptResult<String>>,
     scope_sets: VecDeque<PromptResult<Vec<String>>>,
     overwrite_decisions: VecDeque<PromptResult<bool>>,
+    command_confirmations: VecDeque<PromptResult<ConfirmResult>>,
+    edited_commands: VecDeque<PromptResult<String>>,
 }
 
 impl ScriptedPromptService {
@@ -221,6 +295,11 @@ impl ScriptedPromptService {
         self
     }
 
+    pub fn push_command_request(&mut self, value: PromptResult<String>) -> &mut Self {
+        self.command_requests.push_back(value);
+        self
+    }
+
     pub fn push_provider(&mut self, value: PromptResult<String>) -> &mut Self {
         self.providers.push_back(value);
         self
@@ -233,6 +312,16 @@ impl ScriptedPromptService {
 
     pub fn push_confirm_overwrite(&mut self, value: PromptResult<bool>) -> &mut Self {
         self.overwrite_decisions.push_back(value);
+        self
+    }
+
+    pub fn push_command_confirmation(&mut self, value: PromptResult<ConfirmResult>) -> &mut Self {
+        self.command_confirmations.push_back(value);
+        self
+    }
+
+    pub fn push_edited_command(&mut self, value: PromptResult<String>) -> &mut Self {
+        self.edited_commands.push_back(value);
         self
     }
 
@@ -255,6 +344,11 @@ impl PromptService for ScriptedPromptService {
     fn prompt_api_key(&mut self) -> PromptResult<String> {
         let value = Self::next(&mut self.api_keys, "api key")?;
         validate_api_key(&value)
+    }
+
+    fn prompt_command_request(&mut self) -> PromptResult<String> {
+        let value = Self::next(&mut self.command_requests, "prompt request")?;
+        validate_command_request(&value)
     }
 
     fn select_provider(&mut self, providers: &[PromptOption]) -> PromptResult<String> {
@@ -303,6 +397,14 @@ impl PromptService for ScriptedPromptService {
     fn confirm_overwrite(&mut self, _target: &str) -> PromptResult<bool> {
         Self::next(&mut self.overwrite_decisions, "overwrite confirmation")
     }
+
+    fn confirm_execute_command(&mut self, _command: &str) -> PromptResult<ConfirmResult> {
+        Self::next(&mut self.command_confirmations, "command confirmation")
+    }
+
+    fn edit_command(&mut self, _command: &str) -> PromptResult<String> {
+        Self::next(&mut self.edited_commands, "edit command")
+    }
 }
 
 fn ensure_non_empty<T>(prompt: &'static str, options: &[T]) -> PromptResult<()> {
@@ -348,6 +450,14 @@ fn api_key_validator(input: &str) -> Result<Validation, inquire::CustomUserError
     Ok(Validation::Valid)
 }
 
+fn command_request_validator(input: &str) -> Result<Validation, inquire::CustomUserError> {
+    if normalize_command_request(input).is_empty() {
+        return Ok(Validation::Invalid("Prompt cannot be empty.".into()));
+    }
+
+    Ok(Validation::Valid)
+}
+
 fn validate_profile_name(input: &str) -> PromptResult<String> {
     let normalized = normalize_profile_name(input);
     if normalized.is_empty() {
@@ -372,12 +482,114 @@ fn validate_api_key(input: &str) -> PromptResult<String> {
     Ok(normalized)
 }
 
+fn validate_command_request(input: &str) -> PromptResult<String> {
+    let normalized = normalize_command_request(input);
+    if normalized.is_empty() {
+        return Err(PromptError::PromptFailed {
+            prompt: "prompt request",
+            message: "prompt cannot be empty".to_owned(),
+        });
+    }
+
+    Ok(normalized)
+}
+
+fn edit_command_in_editor(command: &str) -> PromptResult<String> {
+    let mut file = Builder::new()
+        .prefix("tnav-edit-")
+        .suffix(".sh")
+        .tempfile()
+        .map_err(|error| PromptError::PromptFailed {
+            prompt: "edit command",
+            message: format!("failed to create temporary file: {error}"),
+        })?;
+
+    file.write_all(command.as_bytes())
+        .and_then(|_| file.flush())
+        .map_err(|error| PromptError::PromptFailed {
+            prompt: "edit command",
+            message: format!("failed to seed temporary file: {error}"),
+        })?;
+
+    let path = file.path().to_path_buf();
+    open_editor(&path)?;
+
+    let edited = fs::read_to_string(&path).map_err(|error| PromptError::PromptFailed {
+        prompt: "edit command",
+        message: format!("failed to read edited command: {error}"),
+    })?;
+
+    validate_edited_command(&edited)
+}
+
+fn open_editor(path: &Path) -> PromptResult<()> {
+    let editor = env::var("VISUAL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env::var("EDITOR")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(default_editor_command);
+
+    let status = if cfg!(windows) {
+        ProcessCommand::new("cmd")
+            .arg("/C")
+            .arg(format!("{editor} \"{}\"", path.display()))
+            .status()
+    } else {
+        ProcessCommand::new("sh")
+            .arg("-c")
+            .arg(format!("{editor} \"$1\""))
+            .arg("tnav-editor")
+            .arg(path)
+            .status()
+    }
+    .map_err(|error| PromptError::PromptFailed {
+        prompt: "edit command",
+        message: format!("failed to start editor: {error}"),
+    })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(PromptError::PromptFailed {
+            prompt: "edit command",
+            message: format!("editor exited with status {status}"),
+        })
+    }
+}
+
+fn default_editor_command() -> String {
+    if cfg!(windows) {
+        "notepad".to_owned()
+    } else {
+        "nano".to_owned()
+    }
+}
+
+fn validate_edited_command(input: &str) -> PromptResult<String> {
+    if input.trim().is_empty() {
+        return Err(PromptError::PromptFailed {
+            prompt: "edit command",
+            message: "edited command cannot be empty".to_owned(),
+        });
+    }
+
+    Ok(input.trim_end_matches(['\n', '\r']).to_owned())
+}
+
 fn normalize_profile_name(input: &str) -> String {
     input.trim().to_owned()
 }
 
 fn normalize_secret_value(input: &str) -> String {
     input.trim().to_owned()
+}
+
+fn normalize_command_request(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
@@ -439,5 +651,22 @@ mod tests {
         let error = prompts.confirm_overwrite("profile").unwrap_err();
 
         assert!(error.is_cancelled());
+    }
+
+    #[test]
+    fn scripted_edit_command_preserves_multiline_text() {
+        let mut prompts = ScriptedPromptService::new();
+        prompts.push_edited_command(Ok("set -euo pipefail\npwd\nls".to_owned()));
+
+        let edited = prompts.edit_command("pwd").unwrap();
+
+        assert_eq!(edited, "set -euo pipefail\npwd\nls");
+    }
+
+    #[test]
+    fn validate_edited_command_rejects_empty_text() {
+        let error = validate_edited_command("\n\n").unwrap_err();
+
+        assert!(matches!(error, PromptError::PromptFailed { .. }));
     }
 }

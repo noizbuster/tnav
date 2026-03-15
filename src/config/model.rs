@@ -35,12 +35,12 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if let Some(active_profile) = self.active_profile_name() {
-            if !self.profiles.contains_key(active_profile) {
-                return Err(ConfigError::InvalidActiveProfile {
-                    profile: active_profile.to_owned(),
-                });
-            }
+        if let Some(active_profile) = self.active_profile_name()
+            && !self.profiles.contains_key(active_profile)
+        {
+            return Err(ConfigError::InvalidActiveProfile {
+                profile: active_profile.to_owned(),
+            });
         }
 
         Ok(())
