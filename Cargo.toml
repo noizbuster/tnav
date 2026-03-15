@@ -1,0 +1,54 @@
+[package]
+name = "tnav"
+version = "0.1.0"
+edition = "2024"
+description = "Interactive Rust CLI scaffold for tnav"
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+axum = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+directories = "5.0"
+inquire = "0.9"
+keyring = "3.6"
+oauth2 = { version = "5", features = ["reqwest"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.44", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+webbrowser = "1.0"
+
+[dev-dependencies]
+tempfile = "3.18"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+[workspace.metadata.dist]
+cargo-dist-version = "1.0.0-rc.1"
+ci = ["github"]
+hosting = "github"
+installers = ["shell"]
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+]
+install-path = "CARGO_HOME"
+unix-archive = ".tar.gz"
+pr-run-mode = "skip"
+checksum = ["sha256"]
+
+[workspace.metadata.dist.github-custom-runners]
+x86_64-unknown-linux-gnu = "ubuntu-22.04"
+aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
+x86_64-apple-darwin = "macos-13"
+aarch64-apple-darwin = "macos-14"
