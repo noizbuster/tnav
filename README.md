@@ -1,5 +1,9 @@
 <img src="banner.png" alt="tnav banner" width="100%">
 
+<img src="demo.png" alt="tnav demo" width="100%">
+
+[![CI](https://github.com/noizbuster/tnav/actions/workflows/ci.yml/badge.svg)](https://github.com/noizbuster/tnav/actions/workflows/ci.yml)[![Release](https://github.com/noizbuster/tnav/actions/workflows/release.yml/badge.svg)](https://github.com/noizbuster/tnav/actions/workflows/release.yml)
+
 # tnav
 
 `tnav` is a Rust CLI that currently combines two working areas:
@@ -284,6 +288,35 @@ The CLI has partial non-interactive support in the current implementation.
 - confirm loopback networking is allowed on the current machine
 - retry in an environment that can bind localhost sockets
 - verify the configured redirect host is still a loopback address
+
+## Uninstall
+
+There is currently no built-in `tnav uninstall` command.
+
+### Release installer uninstall
+
+If you installed `tnav` from a GitHub release with `tnav-installer.sh`, the default install path is `$CARGO_HOME/bin` or `$HOME/.cargo/bin`.
+
+```bash
+rm -f "${CARGO_HOME:-$HOME/.cargo}/bin/tnav"
+rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/tnav/tnav-receipt.json"
+```
+
+- if you installed with `TNAV_INSTALL_DIR` or `TNAV_UNMANAGED_INSTALL`, remove `tnav` from that custom directory instead
+- if you no longer want the installer's PATH hook, remove any lines that source `"${CARGO_HOME:-$HOME/.cargo}/env"` from `.profile`, `.bashrc`, `.bash_profile`, `.bash_login`, `.zshrc`, or `.zshenv`
+- if you use fish, also remove `~/.config/fish/conf.d/tnav.env.fish`
+- only remove shared Cargo home files such as `"${CARGO_HOME:-$HOME/.cargo}/env"` or `"${CARGO_HOME:-$HOME/.cargo}/env.fish"` if no other Cargo-installed tools depend on them
+
+### Full local cleanup
+
+- delete `config.toml` and `llm.toml` from the `tnav` config directory; on Linux and macOS this is typically `${XDG_CONFIG_HOME:-$HOME/.config}/tnav`
+- remove any saved `tnav` entries from your system keyring if you want to clear stored API keys and OAuth tokens too
+
+### Source-build cleanup
+
+- if you only ran `cargo build`, remove `target/`
+- if you installed with `cargo install --path .`, run `cargo uninstall tnav`
+- if you manually copied the built binary somewhere on your `PATH`, remove that copy directly
 
 ## Developer guide
 
