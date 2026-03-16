@@ -323,14 +323,16 @@ cargo run -- model
 ### CI and releases
 
 - CI runs format, clippy, tests, and `cargo check`
-- tagged release builds use `cargo-dist` `0.31.0` via the `dist` CLI, and the `Release` workflow can also be dispatched manually for an existing tag to upload missing assets
-- a successful release publish run will attach per-target archives, checksums, and a shell installer
+- tagged release builds use the dist-generated `Release` workflow from `cargo-dist` `0.31.0` via the `dist` CLI
+- release jobs authenticate GitHub release operations with the repository secret `PERSONAL_ACCESS_TOKEN`
+- the pushed release tag must match the current package version in `Cargo.toml` or `dist` will refuse to announce the release
+- a successful release publish run will create the GitHub Release and attach per-target archives, checksums, and a shell installer
 
 Useful local release-tooling checks:
 
 ```bash
-dist manifest --tag v0.1.0 --artifacts=all --no-local-paths --output-format=json --allow-dirty
-dist build --tag v0.1.0 --target x86_64-unknown-linux-gnu --artifacts=all --allow-dirty
+dist manifest --tag vX.Y.Z --artifacts=all --no-local-paths --output-format=json
+dist build --tag vX.Y.Z --target x86_64-unknown-linux-gnu --artifacts=all --allow-dirty
 ```
 
 ---

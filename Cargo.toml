@@ -1,12 +1,10 @@
 [package]
 name = "tnav"
-version = "0.1.1"
+version = "0.1.5"
 edition = "2024"
 description = "Interactive Rust CLI scaffold for tnav"
 repository = "https://github.com/noizbuster/tnav"
 license = "MIT"
-
-[workspace]
 
 [dependencies]
 axum = "0.8"
@@ -32,24 +30,32 @@ webbrowser = "1.0"
 inherits = "release"
 lto = "thin"
 
+# Config for 'dist'
 [workspace.metadata.dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.31.0"
-ci = ["github"]
+# CI backends to support
+ci = "github"
+# Where to host releases
 hosting = "github"
+# The installers to generate for each app
 installers = ["shell"]
-targets = [
-  "x86_64-unknown-linux-gnu",
-  "aarch64-unknown-linux-gnu",
-  "x86_64-apple-darwin",
-  "aarch64-apple-darwin",
-]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
+# Path that installers should place binaries in
 install-path = "CARGO_HOME"
+# The archive format to use for non-windows builds (defaults .tar.xz)
 unix-archive = ".tar.gz"
+# Which actions to run on pull requests
 pr-run-mode = "skip"
+allow-dirty = ["ci"]
+# Checksums to generate for each App
 checksum = "sha256"
+# Whether to install an updater program
+install-updater = false
 
 [workspace.metadata.dist.github-custom-runners]
 x86_64-unknown-linux-gnu = "ubuntu-22.04"
 aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
-x86_64-apple-darwin = "macos-13"
-aarch64-apple-darwin = "macos-14"
+x86_64-apple-darwin = "macos-15-intel"
+aarch64-apple-darwin = "macos-15"
