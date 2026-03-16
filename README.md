@@ -324,6 +324,7 @@ cargo run -- model
 
 - CI runs format, clippy, tests, and `cargo check`
 - tagged release builds use the dist-generated `Release` workflow from `cargo-dist` `0.31.0` via the `dist` CLI
+- the `Release` workflow can also be started manually with `workflow_dispatch`; pass a tag like `v0.1.5` to publish or leave the default `dry-run` value to validate planning only
 - release jobs authenticate GitHub release operations with the repository secret `PERSONAL_ACCESS_TOKEN`
 - the pushed release tag must match the current package version in `Cargo.toml` or `dist` will refuse to announce the release
 - a successful release publish run will create the GitHub Release and attach per-target archives, checksums, and a shell installer

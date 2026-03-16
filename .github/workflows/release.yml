@@ -39,6 +39,13 @@ permissions:
 # If there's a prerelease-style suffix to the version, then the release(s)
 # will be marked as a prerelease.
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release Tag
+        required: true
+        default: dry-run
+        type: string
   push:
     tags:
       - '**[0-9]+.[0-9]+.[0-9]+*'
@@ -49,12 +56,38 @@ jobs:
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
-      tag: ${{ !github.event.pull_request && github.ref_name || '' }}
-      tag-flag: ${{ !github.event.pull_request && format('--tag={0}', github.ref_name) || '' }}
-      publishing: ${{ !github.event.pull_request }}
+      tag: ${{ steps.release-target.outputs.tag }}
+      tag-flag: ${{ steps.release-target.outputs.tag_flag }}
+      publishing: ${{ steps.release-target.outputs.publishing }}
     env:
       GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
     steps:
+      - id: release-target
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            input_tag="${{ inputs.tag }}"
+            if [ "$input_tag" = "dry-run" ]; then
+              tag=""
+              tag_flag=""
+              publishing=false
+            elif [ -n "$input_tag" ]; then
+              tag="$input_tag"
+              tag_flag="--tag=$input_tag"
+              publishing=true
+            else
+              echo "manual release tag is required" >&2
+              exit 1
+            fi
+          else
+            tag="${{ github.ref_name }}"
+            tag_flag="--tag=${{ github.ref_name }}"
+            publishing=true
+          fi
+
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'tag_flag=%s\n' "$tag_flag" >> "$GITHUB_OUTPUT"
+          printf 'publishing=%s\n' "$publishing" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -76,7 +109,11 @@ jobs:
       # but also really annoying to build CI around when it needs secrets to work right.)
       - id: plan
         run: |
-          dist ${{ (!github.event.pull_request && format('host --steps=create --tag={0}', github.ref_name)) || 'plan' }} --output-format=json > plan-dist-manifest.json
+          if [ "${{ steps.release-target.outputs.publishing }}" = "true" ]; then
+            dist host --steps=create ${{ steps.release-target.outputs.tag_flag }} --output-format=json > plan-dist-manifest.json
+          else
+            dist plan --output-format=json > plan-dist-manifest.json
+          fi
           echo "dist ran successfully"
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
