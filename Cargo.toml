@@ -1,8 +1,9 @@
 [package]
 name = "tnav"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Interactive Rust CLI scaffold for tnav"
+repository = "https://github.com/noizbuster/tnav"
 license = "MIT"
 
 [workspace]
@@ -32,7 +33,7 @@ inherits = "release"
 lto = "thin"
 
 [workspace.metadata.dist]
-cargo-dist-version = "1.0.0-rc.1"
+cargo-dist-version = "0.31.0"
 ci = ["github"]
 hosting = "github"
 installers = ["shell"]
@@ -45,7 +46,7 @@ targets = [
 install-path = "CARGO_HOME"
 unix-archive = ".tar.gz"
 pr-run-mode = "skip"
-checksum = ["sha256"]
+checksum = "sha256"
 
 [workspace.metadata.dist.github-custom-runners]
 x86_64-unknown-linux-gnu = "ubuntu-22.04"

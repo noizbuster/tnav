@@ -4,30 +4,64 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and upload artifacts for"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 env:
-  CARGO_DIST_VERSION: 1.0.0-rc.1
+  CARGO_DIST_VERSION: 0.31.0
 
 jobs:
   plan:
     name: Plan release
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release-target.outputs.tag }}
+      ref: ${{ steps.release-target.outputs.ref }}
+      host_steps: ${{ steps.release-target.outputs.host_steps }}
     steps:
+      - name: Resolve release target
+        id: release-target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            host_steps="upload"
+          else
+            tag="${{ github.ref_name }}"
+            host_steps="create,upload"
+          fi
+
+          if [ -z "$tag" ]; then
+            echo "release tag is required" >&2
+            exit 1
+          fi
+
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'ref=refs/tags/%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'host_steps=%s\n' "$host_steps" >> "$GITHUB_OUTPUT"
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release-target.outputs.ref }}
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-dist
+        shell: bash
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v${CARGO_DIST_VERSION}/cargo-dist-installer.sh | sh
 
       - name: Generate release manifest
         run: |
-          cargo dist manifest --artifacts=all --no-local-paths --output-format=json > dist-manifest.json
+          dist manifest --tag "${{ steps.release-target.outputs.tag }}" --artifacts=all --no-local-paths --output-format=json > dist-manifest.json
 
   build-local-artifacts:
     name: Build ${{ matrix.target }} artifacts
@@ -49,6 +83,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -59,11 +96,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-dist
+        shell: bash
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v${CARGO_DIST_VERSION}/cargo-dist-installer.sh | sh
 
       - name: Build local artifacts
         run: |
-          cargo dist build --target "${{ matrix.target }}" --artifacts=local
+          dist build --tag "${{ needs.plan.outputs.tag }}" --target "${{ matrix.target }}" --artifacts=local
 
       - name: Upload local artifacts
         uses: actions/upload-artifact@v4
@@ -79,6 +117,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -87,11 +128,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-dist
+        shell: bash
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v${CARGO_DIST_VERSION}/cargo-dist-installer.sh | sh
 
       - name: Build global artifacts
         run: |
-          cargo dist build --artifacts=global
+          dist build --tag "${{ needs.plan.outputs.tag }}" --artifacts=global
 
       - name: Upload global artifacts
         uses: actions/upload-artifact@v4
@@ -111,11 +153,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-dist
+        shell: bash
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v${CARGO_DIST_VERSION}/cargo-dist-installer.sh | sh
 
       - name: Download release artifacts
@@ -127,4 +173,4 @@ jobs:
 
       - name: Publish GitHub release assets
         run: |
-          cargo dist host --steps=create,upload --tag "${{ github.ref_name }}"
+          dist host --steps="${{ needs.plan.outputs.host_steps }}" --tag "${{ needs.plan.outputs.tag }}"

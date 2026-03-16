@@ -50,21 +50,29 @@ Release packaging is configured for:
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
 
-These map to Linux and macOS binaries plus a release installer script generated through
-`cargo-dist`.
+These are the Linux and macOS targets configured for `cargo-dist` release builds.
 
 ## Quick start
 
-### Install from the latest GitHub release
+### Install
 
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/noizbuster/tnav/releases/latest/download/tnav-installer.sh | sh
-```
+The shell installer URL only works when the published GitHub Release includes an uploaded
+`tnav-installer.sh` asset. A manually created release or a release that only contains GitHub's
+auto-generated source archives will still make `releases/latest/download/tnav-installer.sh`
+return `404`.
 
-### Build from source
+The current release pipeline generates that installer with `cargo-dist` `0.31.0`.
+
+For now, build from source:
 
 ```bash
 cargo build
+```
+
+After the next successful GitHub Release is published, the shell installer will be available at:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/noizbuster/tnav/releases/latest/download/tnav-installer.sh | sh
 ```
 
 ### LLM command flow
@@ -315,8 +323,15 @@ cargo run -- model
 ### CI and releases
 
 - CI runs format, clippy, tests, and `cargo check`
-- tagged releases use `cargo-dist`
-- release assets include per-target archives, checksums, and a shell installer
+- tagged release builds use `cargo-dist` `0.31.0` via the `dist` CLI, and the `Release` workflow can also be dispatched manually for an existing tag to upload missing assets
+- a successful release publish run will attach per-target archives, checksums, and a shell installer
+
+Useful local release-tooling checks:
+
+```bash
+dist manifest --tag v0.1.0 --artifacts=all --no-local-paths --output-format=json --allow-dirty
+dist build --tag v0.1.0 --target x86_64-unknown-linux-gnu --artifacts=all --allow-dirty
+```
 
 ---
 
