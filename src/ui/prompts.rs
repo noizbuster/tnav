@@ -8,7 +8,7 @@ use std::process::Command as ProcessCommand;
 
 use inquire::error::InquireError;
 use inquire::validator::Validation;
-use inquire::{Confirm, MultiSelect, Password, Select, Text};
+use inquire::{Confirm, MultiSelect, Password, PasswordDisplayMode, Select, Text};
 use tempfile::Builder;
 use thiserror::Error;
 
@@ -85,7 +85,7 @@ impl Display for PromptOption {
 pub trait PromptService {
     fn prompt_profile_name(&mut self, default: Option<&str>) -> PromptResult<String>;
     fn prompt_api_key(&mut self) -> PromptResult<String>;
-    fn prompt_command_request(&mut self) -> PromptResult<String>;
+    fn prompt_command_request(&mut self, message: &str) -> PromptResult<String>;
     fn select_provider(&mut self, providers: &[PromptOption]) -> PromptResult<String>;
     fn multiselect_scopes(
         &mut self,
@@ -108,8 +108,11 @@ pub fn prompt_api_key(prompts: &mut impl PromptService) -> PromptResult<String> 
     prompts.prompt_api_key()
 }
 
-pub fn prompt_command_request(prompts: &mut impl PromptService) -> PromptResult<String> {
-    prompts.prompt_command_request()
+pub fn prompt_command_request(
+    prompts: &mut impl PromptService,
+    message: &str,
+) -> PromptResult<String> {
+    prompts.prompt_command_request(message)
 }
 
 pub fn select_provider(
@@ -168,12 +171,11 @@ impl PromptService for InquirePromptService {
     }
 
     fn prompt_api_key(&mut self) -> PromptResult<String> {
-        let prompt = Password::new("API key:")
-            .without_confirmation()
-            .with_help_message(
-                "Paste the API key exactly as issued. Surrounding whitespace is ignored.",
-            )
-            .with_validator(api_key_validator);
+        let prompt = build_api_key_prompt(
+            "API key:",
+            "Paste the API key exactly as issued. Input is masked; press Ctrl+R to reveal temporarily.",
+        )
+        .with_validator(api_key_validator);
 
         map_prompt_result(
             "api key",
@@ -181,8 +183,8 @@ impl PromptService for InquirePromptService {
         )
     }
 
-    fn prompt_command_request(&mut self) -> PromptResult<String> {
-        let prompt = Text::new("Prompt:")
+    fn prompt_command_request(&mut self, message: &str) -> PromptResult<String> {
+        let prompt = Text::new(message)
             .with_help_message("Describe what shell command you want tnav to generate.")
             .with_validator(command_request_validator);
 
@@ -268,6 +270,14 @@ impl PromptService for InquirePromptService {
     }
 }
 
+fn build_api_key_prompt<'a>(message: &'a str, help_message: &'a str) -> Password<'a> {
+    Password::new(message)
+        .without_confirmation()
+        .with_display_mode(PasswordDisplayMode::Masked)
+        .with_display_toggle_enabled()
+        .with_help_message(help_message)
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct ScriptedPromptService {
     profile_names: VecDeque<PromptResult<String>>,
@@ -346,7 +356,7 @@ impl PromptService for ScriptedPromptService {
         validate_api_key(&value)
     }
 
-    fn prompt_command_request(&mut self) -> PromptResult<String> {
+    fn prompt_command_request(&mut self, _message: &str) -> PromptResult<String> {
         let value = Self::next(&mut self.command_requests, "prompt request")?;
         validate_command_request(&value)
     }
@@ -614,6 +624,30 @@ mod tests {
         let value = prompts.prompt_api_key().unwrap();
 
         assert_eq!(value, "sk-test value");
+    }
+
+    #[test]
+    fn scripted_command_request_ignores_custom_message_but_validates_input() {
+        let mut prompts = ScriptedPromptService::new();
+        prompts.push_command_request(Ok("  show current directory  ".to_owned()));
+
+        let value = prompts
+            .prompt_command_request("Prompt (glm-4.5-air):")
+            .unwrap();
+
+        assert_eq!(value, "show current directory");
+    }
+
+    #[test]
+    fn api_key_prompt_masks_input_and_allows_reveal_toggle() {
+        let prompt = build_api_key_prompt(
+            "API key:",
+            "Paste the API key exactly as issued. Input is masked; press Ctrl+R to reveal temporarily.",
+        );
+
+        assert_eq!(prompt.display_mode, PasswordDisplayMode::Masked);
+        assert!(prompt.enable_display_toggle);
+        assert!(!prompt.enable_confirmation);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "tnav"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2024"
 description = "Interactive Rust CLI scaffold for tnav"
 repository = "https://github.com/noizbuster/tnav"

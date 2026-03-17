@@ -36,6 +36,10 @@ impl GoogleClient {
     }
 
     fn api_key(&self) -> Result<String, LlmError> {
+        if let Some(api_key) = self.config.inline_api_key() {
+            return Ok(api_key.to_owned());
+        }
+
         self.secret_store
             .load_secret(&self.config.secret_profile_key(), SecretKind::ApiKey)
             .map_err(|error| LlmError::AuthFailed {
@@ -452,6 +456,8 @@ fn parse_sse_data_line(line: &str) -> Result<Option<String>, LlmError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::llm::{ConfiguredProvider, GoogleClient, Provider};
+
     use serde_json::json;
 
     use super::{
@@ -460,6 +466,24 @@ mod tests {
         is_missing_model_message, normalize_model_resource_name, parse_model_names,
         parse_sse_data_line,
     };
+
+    #[test]
+    fn api_key_prefers_inline_config_value() {
+        let client = GoogleClient::new(ConfiguredProvider {
+            name: "google".to_owned(),
+            provider: Provider::Google,
+            model: "gemini-2.5-flash".to_owned(),
+            base_url: None,
+            api_key: Some("inline-google-key".to_owned()),
+            timeout_secs: crate::llm::DEFAULT_PROVIDER_TIMEOUT_SECS,
+        })
+        .expect("client builds");
+
+        assert_eq!(
+            client.api_key().expect("inline api key"),
+            "inline-google-key"
+        );
+    }
 
     #[test]
     fn google_request_serializes_generate_content_shape() {

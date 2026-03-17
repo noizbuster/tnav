@@ -67,15 +67,51 @@ pub async fn run(global: &GlobalArgs) -> Result<(), TnavError> {
     };
 
     let store = KeyringSecretStore::new();
-    let keyring_available = match store.load_secret("__doctor__", SecretKind::OAuthMetadata) {
-        Ok(_) => {
-            checks.push(DoctorCheck {
-                name: "keyring_available",
-                ok: true,
-                status: "ok",
-                details: "secure secret storage is reachable".to_owned(),
-            });
-            true
+    let test_profile = "__doctor_test__";
+    let test_value = "tnav-doctor-verification";
+    let keyring_available = match store.save_secret(test_profile, SecretKind::ApiKey, test_value) {
+        Ok(()) => {
+            let load_result = store.load_secret(test_profile, SecretKind::ApiKey);
+            let _ = store.delete_secret(test_profile, SecretKind::ApiKey);
+
+            match load_result {
+                Ok(Some(loaded)) if loaded == test_value => {
+                    checks.push(DoctorCheck {
+                        name: "keyring_available",
+                        ok: true,
+                        status: "ok",
+                        details: "secure secret storage is reachable and functional".to_owned(),
+                    });
+                    true
+                }
+                Ok(Some(_)) => {
+                    checks.push(DoctorCheck {
+                        name: "keyring_available",
+                        ok: false,
+                        status: "corrupted",
+                        details: "keyring returned incorrect value - save/load mismatch".to_owned(),
+                    });
+                    false
+                }
+                Ok(None) => {
+                    checks.push(DoctorCheck {
+                        name: "keyring_available",
+                        ok: false,
+                        status: "broken",
+                        details: "keyring save succeeded but load returned nothing - secret service may not be running".to_owned(),
+                    });
+                    false
+                }
+                Err(error) => {
+                    checks.push(DoctorCheck {
+                        name: "keyring_available",
+                        ok: false,
+                        status: "load_failed",
+                        details: format!("keyring save succeeded but load failed: {}", error),
+                    });
+                    false
+                }
+            }
         }
         Err(error) => {
             checks.push(DoctorCheck {

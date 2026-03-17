@@ -29,6 +29,7 @@ pub enum Command {
     Init,
     Connect,
     Model(ModelArgs),
+    Status,
     #[command(subcommand)]
     Auth(AuthCommand),
     #[command(subcommand)]
@@ -132,6 +133,13 @@ mod tests {
             Some(Command::Model(args)) => assert_eq!(args.model.as_deref(), Some("llama3.2")),
             other => panic!("expected model subcommand, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn status_parses_as_real_subcommand() {
+        let cli = Cli::parse_from(["tnav", "status"]);
+
+        assert!(matches!(cli.command, Some(Command::Status)));
     }
 
     #[test]

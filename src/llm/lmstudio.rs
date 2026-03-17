@@ -64,18 +64,36 @@ impl OpenAiCompatibleClient {
             return Ok(Some(api_key.to_owned()));
         }
 
-        self.secret_store
-            .load_secret(&self.config.secret_profile_key(), SecretKind::ApiKey)
-            .map_err(|error| LlmError::AuthFailed {
-                message: error.to_string(),
-            })?
-            .ok_or_else(|| LlmError::ConfigMissing {
-                message: format!(
-                    "{} API key is not configured in secure storage",
-                    self.config.provider.display_name()
-                ),
-            })
-            .map(Some)
+        let secret_key = self.config.secret_profile_key();
+        tracing::debug!(
+            secret_key = %secret_key,
+            provider_name = %self.config.name,
+            "Loading API key from keyring"
+        );
+        match self
+            .secret_store
+            .load_secret(&secret_key, SecretKind::ApiKey)
+        {
+            Ok(Some(key)) => {
+                tracing::debug!(secret_key = %secret_key, "API key loaded successfully");
+                Ok(Some(key))
+            }
+            Ok(None) => {
+                tracing::error!(secret_key = %secret_key, "API key not found in keyring");
+                Err(LlmError::ConfigMissing {
+                    message: format!(
+                        "{} API key is not configured in secure storage",
+                        self.config.provider.display_name()
+                    ),
+                })
+            }
+            Err(error) => {
+                tracing::error!(secret_key = %secret_key, error = %error, "Failed to load API key from keyring");
+                Err(LlmError::AuthFailed {
+                    message: error.to_string(),
+                })
+            }
+        }
     }
 
     fn maybe_bearer_auth(
@@ -380,7 +398,9 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    use crate::llm::{ConfiguredProvider, LlmProvider, Provider, StreamSink};
+    use crate::llm::{
+        ConfiguredProvider, DEFAULT_PROVIDER_TIMEOUT_SECS, LlmProvider, Provider, StreamSink,
+    };
 
     use super::{OpenAiCompatibleClient, parse_sse_data_line};
 
@@ -399,7 +419,7 @@ mod tests {
             model: "test-model".to_owned(),
             base_url: Some(base_url),
             api_key: api_key.map(str::to_owned),
-            timeout_secs: 30,
+            timeout_secs: DEFAULT_PROVIDER_TIMEOUT_SECS,
         }
     }
 

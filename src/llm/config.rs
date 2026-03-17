@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct LlmConfig {
     #[serde(default)]
@@ -103,6 +105,12 @@ impl ConfiguredProvider {
         self.base_url
             .as_deref()
             .unwrap_or_else(|| self.provider.default_base_url())
+    }
+
+    pub fn inline_api_key(&self) -> Option<&str> {
+        self.api_key
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
     }
 
     pub fn secret_profile_key(&self) -> String {
@@ -223,12 +231,12 @@ impl Provider {
 }
 
 fn default_timeout_secs() -> u64 {
-    30
+    DEFAULT_PROVIDER_TIMEOUT_SECS
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfiguredProvider, LlmConfig, Provider};
+    use super::{ConfiguredProvider, DEFAULT_PROVIDER_TIMEOUT_SECS, LlmConfig, Provider};
 
     #[test]
     fn normalize_sets_first_provider_active_when_missing() {
@@ -240,7 +248,7 @@ mod tests {
                 model: String::new(),
                 base_url: None,
                 api_key: None,
-                timeout_secs: 30,
+                timeout_secs: DEFAULT_PROVIDER_TIMEOUT_SECS,
             }],
         }
         .normalize();
@@ -257,7 +265,7 @@ mod tests {
             model: "old".to_owned(),
             base_url: None,
             api_key: None,
-            timeout_secs: 30,
+            timeout_secs: DEFAULT_PROVIDER_TIMEOUT_SECS,
         });
         config.upsert_provider(ConfiguredProvider {
             name: "ollama-1".to_owned(),
@@ -265,7 +273,7 @@ mod tests {
             model: "new".to_owned(),
             base_url: None,
             api_key: None,
-            timeout_secs: 30,
+            timeout_secs: DEFAULT_PROVIDER_TIMEOUT_SECS,
         });
 
         assert_eq!(config.providers.len(), 1);
@@ -283,7 +291,7 @@ mod tests {
                     model: "gpt".to_owned(),
                     base_url: None,
                     api_key: None,
-                    timeout_secs: 30,
+                    timeout_secs: DEFAULT_PROVIDER_TIMEOUT_SECS,
                 },
                 ConfiguredProvider {
                     name: "ollama-1".to_owned(),
@@ -291,7 +299,7 @@ mod tests {
                     model: "llama".to_owned(),
                     base_url: None,
                     api_key: None,
-                    timeout_secs: 30,
+                    timeout_secs: DEFAULT_PROVIDER_TIMEOUT_SECS,
                 },
             ],
         };
@@ -299,6 +307,20 @@ mod tests {
         config.remove_provider("openai-1");
 
         assert_eq!(config.active_provider.as_deref(), Some("ollama-1"));
+    }
+
+    #[test]
+    fn configured_provider_deserialize_uses_one_minute_timeout_by_default() {
+        let provider: ConfiguredProvider = toml::from_str(
+            r#"
+name = "openai-1"
+provider = "openai"
+model = "gpt-4.1-mini"
+"#,
+        )
+        .expect("provider should deserialize");
+
+        assert_eq!(provider.timeout_secs, DEFAULT_PROVIDER_TIMEOUT_SECS);
     }
 
     #[test]

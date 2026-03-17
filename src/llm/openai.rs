@@ -38,6 +38,10 @@ impl OpenAiClient {
     }
 
     fn api_key(&self) -> Result<String, LlmError> {
+        if let Some(api_key) = self.config.inline_api_key() {
+            return Ok(api_key.to_owned());
+        }
+
         self.secret_store
             .load_secret(&self.config.secret_profile_key(), SecretKind::ApiKey)
             .map_err(|error| LlmError::AuthFailed {
@@ -336,7 +340,27 @@ fn parse_sse_data_line(line: &str) -> Result<Option<String>, LlmError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::llm::{ConfiguredProvider, DEFAULT_PROVIDER_TIMEOUT_SECS, OpenAiClient, Provider};
+
     use super::parse_sse_data_line;
+
+    #[test]
+    fn api_key_prefers_inline_config_value() {
+        let client = OpenAiClient::new(ConfiguredProvider {
+            name: "openai".to_owned(),
+            provider: Provider::OpenAI,
+            model: "gpt-4.1-mini".to_owned(),
+            base_url: None,
+            api_key: Some("inline-openai-key".to_owned()),
+            timeout_secs: DEFAULT_PROVIDER_TIMEOUT_SECS,
+        })
+        .expect("client builds");
+
+        assert_eq!(
+            client.api_key().expect("inline api key"),
+            "inline-openai-key"
+        );
+    }
 
     #[test]
     fn parse_sse_data_line_extracts_content() {

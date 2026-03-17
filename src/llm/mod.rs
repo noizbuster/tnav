@@ -9,7 +9,7 @@ mod openai;
 mod provider;
 
 pub use anthropic::AnthropicClient;
-pub use config::{ConfiguredProvider, LlmConfig, Provider};
+pub use config::{ConfiguredProvider, DEFAULT_PROVIDER_TIMEOUT_SECS, LlmConfig, Provider};
 pub use error::{LlmError, LlmResult};
 pub use google::GoogleClient;
 pub use lmstudio::OpenAiCompatibleClient;

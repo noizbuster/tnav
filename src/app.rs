@@ -14,6 +14,7 @@ pub async fn run(cli: Cli) -> Result<(), TnavError> {
         Some(Command::Model(args)) => {
             commands::ask::run_model(&global, args.model.as_deref()).await
         }
+        Some(Command::Status) => commands::status::run(&global).await,
         Some(Command::Auth(auth_command)) => commands::auth::run(auth_command, &global).await,
         Some(Command::Doctor) => commands::doctor::run(&global).await,
         Some(Command::Config(command)) => commands::unsupported(&format!("config {command:?}")),

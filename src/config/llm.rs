@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::llm::{ConfiguredProvider, LlmConfig, Provider};
+use crate::llm::{ConfiguredProvider, DEFAULT_PROVIDER_TIMEOUT_SECS, LlmConfig, Provider};
 
 use super::{ConfigError, default_config_dir};
 
@@ -132,7 +132,7 @@ fn migrate_legacy_provider(
 }
 
 fn legacy_default_timeout_secs() -> u64 {
-    30
+    DEFAULT_PROVIDER_TIMEOUT_SECS
 }
 
 fn create_config_dirs(path: &Path) -> Result<(), ConfigError> {
@@ -238,4 +238,29 @@ fn set_file_permissions(path: &Path) -> Result<(), ConfigError> {
 #[cfg(not(unix))]
 fn set_file_permissions(_path: &Path) -> Result<(), ConfigError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::llm::DEFAULT_PROVIDER_TIMEOUT_SECS;
+
+    use super::parse_llm_config;
+
+    #[test]
+    fn legacy_provider_deserialize_uses_one_minute_timeout_by_default() {
+        let config = parse_llm_config(
+            r#"
+provider = "openai"
+model = "gpt-4.1-mini"
+"#,
+            std::path::Path::new("/tmp/llm.toml"),
+        )
+        .expect("legacy config should parse");
+
+        assert_eq!(config.providers.len(), 1);
+        assert_eq!(
+            config.providers[0].timeout_secs,
+            DEFAULT_PROVIDER_TIMEOUT_SECS
+        );
+    }
 }

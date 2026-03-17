@@ -3,6 +3,7 @@ pub mod auth;
 pub mod doctor;
 pub mod executor;
 pub mod init;
+pub mod status;
 
 use crate::auth::AuthError;
 use crate::config::{Config, ConfigError};
