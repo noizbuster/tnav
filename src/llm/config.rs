@@ -118,13 +118,40 @@ pub enum Provider {
     OpenAiCompatible,
     #[serde(rename = "openai")]
     OpenAI,
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "google")]
+    Google,
+    #[serde(rename = "mistral")]
+    Mistral,
+    #[serde(rename = "groq")]
+    Groq,
+    #[serde(rename = "deepseek")]
+    DeepSeek,
+    #[serde(rename = "xai")]
+    XAI,
+    #[serde(rename = "zai")]
+    Zai,
+    #[serde(rename = "zai-coding-plan-global")]
+    ZaiCodingPlanGlobal,
+    #[serde(rename = "zai-coding-plan-china")]
+    ZaiCodingPlanChina,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 3] = [
+    pub const ALL: [Provider; 12] = [
         Provider::Ollama,
         Provider::OpenAI,
         Provider::OpenAiCompatible,
+        Provider::Anthropic,
+        Provider::Google,
+        Provider::Mistral,
+        Provider::Groq,
+        Provider::DeepSeek,
+        Provider::XAI,
+        Provider::Zai,
+        Provider::ZaiCodingPlanGlobal,
+        Provider::ZaiCodingPlanChina,
     ];
 
     pub fn default_base_url(&self) -> &'static str {
@@ -132,6 +159,15 @@ impl Provider {
             Self::Ollama => "http://localhost:11434",
             Self::OpenAiCompatible => "http://localhost:1234",
             Self::OpenAI => "https://api.openai.com/v1",
+            Self::Anthropic => "https://api.anthropic.com",
+            Self::Google => "https://generativelanguage.googleapis.com/v1beta",
+            Self::Mistral => "https://api.mistral.ai/v1",
+            Self::Groq => "https://api.groq.com/openai/v1",
+            Self::DeepSeek => "https://api.deepseek.com/v1",
+            Self::XAI => "https://api.x.ai/v1",
+            Self::Zai => "https://api.z.ai/api/paas/v4",
+            Self::ZaiCodingPlanGlobal => "https://api.z.ai/api/coding/paas/v4",
+            Self::ZaiCodingPlanChina => "https://open.bigmodel.cn/api/coding/paas/v4",
         }
     }
 
@@ -140,6 +176,32 @@ impl Provider {
             Self::Ollama => "ollama",
             Self::OpenAiCompatible => "openai-compatible",
             Self::OpenAI => "openai",
+            Self::Anthropic => "anthropic",
+            Self::Google => "google",
+            Self::Mistral => "mistral",
+            Self::Groq => "groq",
+            Self::DeepSeek => "deepseek",
+            Self::XAI => "xai",
+            Self::Zai => "zai",
+            Self::ZaiCodingPlanGlobal => "zai-coding-plan-global",
+            Self::ZaiCodingPlanChina => "zai-coding-plan-china",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Ollama => "Ollama",
+            Self::OpenAiCompatible => "OpenAI-compatible",
+            Self::OpenAI => "OpenAI",
+            Self::Anthropic => "Anthropic (Claude)",
+            Self::Google => "Google (Gemini)",
+            Self::Mistral => "Mistral AI",
+            Self::Groq => "Groq",
+            Self::DeepSeek => "DeepSeek",
+            Self::XAI => "xAI (Grok)",
+            Self::Zai => "z.ai",
+            Self::ZaiCodingPlanGlobal => "z.ai Coding Plan (Global)",
+            Self::ZaiCodingPlanChina => "z.ai Coding Plan (China)",
         }
     }
 }
@@ -221,5 +283,149 @@ mod tests {
         config.remove_provider("openai-1");
 
         assert_eq!(config.active_provider.as_deref(), Some("ollama-1"));
+    }
+
+    #[test]
+    fn provider_all_contains_all_variants() {
+        assert_eq!(Provider::ALL.len(), 12);
+        assert!(Provider::ALL.contains(&Provider::Ollama));
+        assert!(Provider::ALL.contains(&Provider::OpenAI));
+        assert!(Provider::ALL.contains(&Provider::OpenAiCompatible));
+        assert!(Provider::ALL.contains(&Provider::Anthropic));
+        assert!(Provider::ALL.contains(&Provider::Google));
+        assert!(Provider::ALL.contains(&Provider::Mistral));
+        assert!(Provider::ALL.contains(&Provider::Groq));
+        assert!(Provider::ALL.contains(&Provider::DeepSeek));
+        assert!(Provider::ALL.contains(&Provider::XAI));
+        assert!(Provider::ALL.contains(&Provider::Zai));
+        assert!(Provider::ALL.contains(&Provider::ZaiCodingPlanGlobal));
+        assert!(Provider::ALL.contains(&Provider::ZaiCodingPlanChina));
+    }
+
+    #[test]
+    fn provider_default_base_urls() {
+        assert_eq!(
+            Provider::Ollama.default_base_url(),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            Provider::OpenAiCompatible.default_base_url(),
+            "http://localhost:1234"
+        );
+        assert_eq!(
+            Provider::OpenAI.default_base_url(),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            Provider::Anthropic.default_base_url(),
+            "https://api.anthropic.com"
+        );
+        assert_eq!(
+            Provider::Google.default_base_url(),
+            "https://generativelanguage.googleapis.com/v1beta"
+        );
+        assert_eq!(
+            Provider::Mistral.default_base_url(),
+            "https://api.mistral.ai/v1"
+        );
+        assert_eq!(
+            Provider::Groq.default_base_url(),
+            "https://api.groq.com/openai/v1"
+        );
+        assert_eq!(
+            Provider::DeepSeek.default_base_url(),
+            "https://api.deepseek.com/v1"
+        );
+        assert_eq!(Provider::XAI.default_base_url(), "https://api.x.ai/v1");
+        assert_eq!(
+            Provider::Zai.default_base_url(),
+            "https://api.z.ai/api/paas/v4"
+        );
+        assert_eq!(
+            Provider::ZaiCodingPlanGlobal.default_base_url(),
+            "https://api.z.ai/api/coding/paas/v4"
+        );
+        assert_eq!(
+            Provider::ZaiCodingPlanChina.default_base_url(),
+            "https://open.bigmodel.cn/api/coding/paas/v4"
+        );
+    }
+
+    #[test]
+    fn provider_value_strings() {
+        assert_eq!(Provider::Ollama.value(), "ollama");
+        assert_eq!(Provider::OpenAiCompatible.value(), "openai-compatible");
+        assert_eq!(Provider::OpenAI.value(), "openai");
+        assert_eq!(Provider::Anthropic.value(), "anthropic");
+        assert_eq!(Provider::Google.value(), "google");
+        assert_eq!(Provider::Mistral.value(), "mistral");
+        assert_eq!(Provider::Groq.value(), "groq");
+        assert_eq!(Provider::DeepSeek.value(), "deepseek");
+        assert_eq!(Provider::XAI.value(), "xai");
+        assert_eq!(Provider::Zai.value(), "zai");
+        assert_eq!(
+            Provider::ZaiCodingPlanGlobal.value(),
+            "zai-coding-plan-global"
+        );
+        assert_eq!(
+            Provider::ZaiCodingPlanChina.value(),
+            "zai-coding-plan-china"
+        );
+    }
+
+    #[test]
+    fn provider_display_names() {
+        assert_eq!(Provider::Ollama.display_name(), "Ollama");
+        assert_eq!(Provider::OpenAI.display_name(), "OpenAI");
+        assert_eq!(
+            Provider::OpenAiCompatible.display_name(),
+            "OpenAI-compatible"
+        );
+        assert_eq!(Provider::Anthropic.display_name(), "Anthropic (Claude)");
+        assert_eq!(Provider::Google.display_name(), "Google (Gemini)");
+        assert_eq!(Provider::Mistral.display_name(), "Mistral AI");
+        assert_eq!(Provider::Groq.display_name(), "Groq");
+        assert_eq!(Provider::DeepSeek.display_name(), "DeepSeek");
+        assert_eq!(Provider::XAI.display_name(), "xAI (Grok)");
+        assert_eq!(Provider::Zai.display_name(), "z.ai");
+        assert_eq!(
+            Provider::ZaiCodingPlanGlobal.display_name(),
+            "z.ai Coding Plan (Global)"
+        );
+        assert_eq!(
+            Provider::ZaiCodingPlanChina.display_name(),
+            "z.ai Coding Plan (China)"
+        );
+    }
+
+    #[test]
+    fn provider_serde_roundtrip() {
+        let providers = [
+            Provider::Ollama,
+            Provider::OpenAiCompatible,
+            Provider::OpenAI,
+            Provider::Anthropic,
+            Provider::Google,
+            Provider::Mistral,
+            Provider::Groq,
+            Provider::DeepSeek,
+            Provider::XAI,
+            Provider::Zai,
+            Provider::ZaiCodingPlanGlobal,
+            Provider::ZaiCodingPlanChina,
+        ];
+
+        for provider in providers {
+            let json = serde_json::to_string(&provider).unwrap();
+            let parsed: Provider = serde_json::from_str(&json).unwrap();
+            assert_eq!(provider, parsed);
+        }
+    }
+
+    #[test]
+    fn provider_serde_lmstudio_alias() {
+        let json = r#""lmstudio""#;
+        let parsed: Provider = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed, Provider::OpenAiCompatible);
     }
 }

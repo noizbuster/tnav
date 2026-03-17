@@ -11,8 +11,8 @@ use crate::commands::executor::execute_command;
 use crate::config::{llm_config_path, load_llm_config, save_llm_config};
 use crate::errors::TnavError;
 use crate::llm::{
-    ConfiguredProvider, LlmConfig, LlmError, LlmProvider, OllamaClient, OpenAiClient,
-    OpenAiCompatibleClient, Provider, StreamSink,
+    AnthropicClient, ConfiguredProvider, GoogleClient, LlmConfig, LlmError, LlmProvider,
+    OllamaClient, OpenAiClient, OpenAiCompatibleClient, Provider, StreamSink,
 };
 use crate::output::Output;
 use crate::secrets::{KeyringSecretStore, SecretKind, SecretStore};
@@ -215,7 +215,7 @@ fn render_connect_sections(output: &Output, config: &LlmConfig) {
     output.line("");
     output.yellow_heading("Available providers");
     for provider in available_providers() {
-        output.line(format!("  - {}", provider.value()));
+        output.line(format!("  - {}", provider.display_name()));
     }
     output.line("");
 }
@@ -244,7 +244,7 @@ fn connect_menu_options(config: &LlmConfig) -> Vec<PromptOption> {
     for provider in available_providers() {
         options.push(PromptOption::new(
             format!("add:{}", provider.value()),
-            format!("Add {}", provider.value()),
+            format!("Add {}", provider.display_name()),
         ));
     }
 
@@ -272,6 +272,15 @@ fn parse_provider_value(value: &str) -> Result<Provider, TnavError> {
         "ollama" => Ok(Provider::Ollama),
         "openai" => Ok(Provider::OpenAI),
         "openai-compatible" | "lmstudio" => Ok(Provider::OpenAiCompatible),
+        "anthropic" => Ok(Provider::Anthropic),
+        "google" => Ok(Provider::Google),
+        "mistral" => Ok(Provider::Mistral),
+        "groq" => Ok(Provider::Groq),
+        "deepseek" => Ok(Provider::DeepSeek),
+        "xai" => Ok(Provider::XAI),
+        "zai" => Ok(Provider::Zai),
+        "zai-coding-plan-global" => Ok(Provider::ZaiCodingPlanGlobal),
+        "zai-coding-plan-china" => Ok(Provider::ZaiCodingPlanChina),
         _ => Err(TnavError::InvalidInput {
             message: format!("unsupported provider '{value}'"),
         }),
@@ -291,6 +300,22 @@ fn configured_provider_label(config: &ConfiguredProvider, active: bool) -> Strin
 
 fn available_providers() -> Vec<Provider> {
     Provider::ALL.into_iter().collect()
+}
+
+fn uses_api_key_storage(provider: Provider) -> bool {
+    match provider {
+        Provider::Ollama | Provider::OpenAiCompatible => false,
+        Provider::OpenAI
+        | Provider::Anthropic
+        | Provider::Google
+        | Provider::Mistral
+        | Provider::Groq
+        | Provider::DeepSeek
+        | Provider::XAI
+        | Provider::Zai
+        | Provider::ZaiCodingPlanGlobal
+        | Provider::ZaiCodingPlanChina => true,
+    }
 }
 
 async fn manage_provider(
@@ -343,7 +368,7 @@ async fn manage_provider(
             if was_active {
                 config.set_active_provider(&updated_name);
             }
-            if provider_config.provider == Provider::OpenAI
+            if uses_api_key_storage(provider_config.provider)
                 && let Some(updated_provider) = config.configured_provider(&updated_name)
             {
                 persist_openai_secret_update(
@@ -361,7 +386,7 @@ async fn manage_provider(
             )?;
             if confirmed {
                 config.remove_provider(&provider_config.name);
-                if provider_config.provider == Provider::OpenAI {
+                if uses_api_key_storage(provider_config.provider) {
                     KeyringSecretStore::new()
                         .delete_secret(&provider_config.secret_profile_key(), SecretKind::ApiKey)
                         .map_err(map_secret_store_error)?;
@@ -412,7 +437,7 @@ async fn add_provider(
     let provider_name = prepared.config.name.clone();
     config.upsert_provider(prepared.config.clone());
     config.set_active_provider(&provider_name);
-    if provider == Provider::OpenAI {
+    if uses_api_key_storage(provider) {
         persist_openai_secret_update(
             &prepared.config,
             &prepared.config,
@@ -464,6 +489,27 @@ fn prompt_provider_configuration(
             }
         }
         Provider::Ollama | Provider::OpenAiCompatible => None,
+        Provider::Anthropic
+        | Provider::Google
+        | Provider::Mistral
+        | Provider::Groq
+        | Provider::DeepSeek
+        | Provider::XAI
+        | Provider::Zai
+        | Provider::ZaiCodingPlanGlobal
+        | Provider::ZaiCodingPlanChina => {
+            if existing.is_some() {
+                prompt_optional_secret_value(
+                    "API key (leave blank to keep current):",
+                    Some("Enter a new API key only if you want to replace the stored one."),
+                )?
+            } else {
+                Some(prompt_required_secret_value(
+                    "API key:",
+                    Some("Paste the API key for this provider."),
+                )?)
+            }
+        }
     };
 
     Ok(PreparedProviderConfig {
@@ -985,6 +1031,21 @@ fn build_provider(config: &ConfiguredProvider) -> Result<Box<dyn LlmProvider>, T
         )),
         Provider::OpenAI => Ok(Box::new(
             OpenAiClient::new(config.clone()).map_err(map_llm_error)?,
+        )),
+        Provider::Anthropic => Ok(Box::new(
+            AnthropicClient::new(config.clone()).map_err(map_llm_error)?,
+        )),
+        Provider::Google => Ok(Box::new(
+            GoogleClient::new(config.clone()).map_err(map_llm_error)?,
+        )),
+        Provider::Mistral
+        | Provider::Groq
+        | Provider::DeepSeek
+        | Provider::XAI
+        | Provider::Zai
+        | Provider::ZaiCodingPlanGlobal
+        | Provider::ZaiCodingPlanChina => Ok(Box::new(
+            OpenAiCompatibleClient::new(config.clone()).map_err(map_llm_error)?,
         )),
     }
 }
