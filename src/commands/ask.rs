@@ -302,22 +302,6 @@ fn available_providers() -> Vec<Provider> {
     Provider::ALL.into_iter().collect()
 }
 
-fn uses_api_key_storage(provider: Provider) -> bool {
-    match provider {
-        Provider::Ollama | Provider::OpenAiCompatible => false,
-        Provider::OpenAI
-        | Provider::Anthropic
-        | Provider::Google
-        | Provider::Mistral
-        | Provider::Groq
-        | Provider::DeepSeek
-        | Provider::XAI
-        | Provider::Zai
-        | Provider::ZaiCodingPlanGlobal
-        | Provider::ZaiCodingPlanChina => true,
-    }
-}
-
 async fn manage_provider(
     _global: &GlobalArgs,
     output: &Output,
@@ -368,7 +352,7 @@ async fn manage_provider(
             if was_active {
                 config.set_active_provider(&updated_name);
             }
-            if uses_api_key_storage(provider_config.provider)
+            if provider_config.provider.uses_api_key_storage()
                 && let Some(updated_provider) = config.configured_provider(&updated_name)
             {
                 persist_openai_secret_update(
@@ -386,7 +370,7 @@ async fn manage_provider(
             )?;
             if confirmed {
                 config.remove_provider(&provider_config.name);
-                if uses_api_key_storage(provider_config.provider) {
+                if provider_config.provider.uses_api_key_storage() {
                     KeyringSecretStore::new()
                         .delete_secret(&provider_config.secret_profile_key(), SecretKind::ApiKey)
                         .map_err(map_secret_store_error)?;
@@ -437,7 +421,7 @@ async fn add_provider(
     let provider_name = prepared.config.name.clone();
     config.upsert_provider(prepared.config.clone());
     config.set_active_provider(&provider_name);
-    if uses_api_key_storage(provider) {
+    if provider.uses_api_key_storage() {
         persist_openai_secret_update(
             &prepared.config,
             &prepared.config,

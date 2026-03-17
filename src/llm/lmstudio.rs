@@ -6,13 +6,16 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::llm::{
-    ConfiguredProvider, LLM_SYSTEM_PROMPT, LlmError, LlmProvider, StreamSink, strip_markdown_fences,
+    ConfiguredProvider, LLM_SYSTEM_PROMPT, LlmError, LlmProvider, Provider, StreamSink,
+    strip_markdown_fences,
 };
+use crate::secrets::{KeyringSecretStore, SecretKind, SecretStore};
 
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatibleClient {
     http_client: Client,
     config: ConfiguredProvider,
+    secret_store: KeyringSecretStore,
 }
 
 impl OpenAiCompatibleClient {
@@ -27,11 +30,62 @@ impl OpenAiCompatibleClient {
         Ok(Self {
             http_client,
             config,
+            secret_store: KeyringSecretStore::new(),
         })
     }
 
     fn base_url(&self) -> &str {
         self.config.base_url_or_default().trim_end_matches('/')
+    }
+
+    fn api_base_url(&self) -> String {
+        if self.config.provider == Provider::OpenAiCompatible && !self.base_url().ends_with("/v1") {
+            format!("{}/v1", self.base_url())
+        } else {
+            self.base_url().to_owned()
+        }
+    }
+
+    fn endpoint_url(&self, path: &str) -> String {
+        format!("{}/{}", self.api_base_url(), path.trim_start_matches('/'))
+    }
+
+    fn api_key(&self) -> Result<Option<String>, LlmError> {
+        if !self.config.provider.uses_api_key_storage() {
+            return Ok(None);
+        }
+
+        if let Some(api_key) = self
+            .config
+            .api_key
+            .as_deref()
+            .filter(|api_key| !api_key.trim().is_empty())
+        {
+            return Ok(Some(api_key.to_owned()));
+        }
+
+        self.secret_store
+            .load_secret(&self.config.secret_profile_key(), SecretKind::ApiKey)
+            .map_err(|error| LlmError::AuthFailed {
+                message: error.to_string(),
+            })?
+            .ok_or_else(|| LlmError::ConfigMissing {
+                message: format!(
+                    "{} API key is not configured in secure storage",
+                    self.config.provider.display_name()
+                ),
+            })
+            .map(Some)
+    }
+
+    fn maybe_bearer_auth(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, LlmError> {
+        Ok(match self.api_key()? {
+            Some(api_key) => request.bearer_auth(api_key),
+            None => request,
+        })
     }
 
     fn chat_request(&self, prompt: &str, stream: bool) -> OpenAiCompatibleChatRequest {
@@ -62,14 +116,22 @@ impl LlmProvider for OpenAiCompatibleClient {
             let request = self.chat_request(prompt, false);
 
             let response = self
-                .http_client
-                .post(format!("{}/v1/chat/completions", self.base_url()))
+                .maybe_bearer_auth(self.http_client.post(self.endpoint_url("chat/completions")))?
                 .json(&request)
                 .send()
                 .await
                 .map_err(|error| LlmError::ConnectionFailed {
                     message: error.to_string(),
                 })?;
+
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(LlmError::AuthFailed {
+                    message: format!(
+                        "{} rejected the configured API key",
+                        self.config.provider.display_name()
+                    ),
+                });
+            }
 
             if response.status() == reqwest::StatusCode::NOT_FOUND {
                 return Err(LlmError::ModelNotFound {
@@ -111,17 +173,28 @@ impl LlmProvider for OpenAiCompatibleClient {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, LlmError>> + Send + 'a>> {
         Box::pin(async move {
             let response = self
-                .http_client
-                .get(format!("{}/v1/models", self.base_url()))
+                .maybe_bearer_auth(self.http_client.get(self.endpoint_url("models")))?
                 .send()
                 .await
                 .map_err(|error| LlmError::ConnectionFailed {
                     message: error.to_string(),
-                })?
-                .error_for_status()
-                .map_err(|error| LlmError::InvalidResponse {
-                    message: error.to_string(),
                 })?;
+
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(LlmError::AuthFailed {
+                    message: format!(
+                        "{} rejected the configured API key",
+                        self.config.provider.display_name()
+                    ),
+                });
+            }
+
+            let response =
+                response
+                    .error_for_status()
+                    .map_err(|error| LlmError::InvalidResponse {
+                        message: error.to_string(),
+                    })?;
 
             let payload: OpenAiCompatibleModelsResponse =
                 response
@@ -143,14 +216,22 @@ impl LlmProvider for OpenAiCompatibleClient {
         Box::pin(async move {
             let request = self.chat_request(prompt, true);
             let mut response = self
-                .http_client
-                .post(format!("{}/v1/chat/completions", self.base_url()))
+                .maybe_bearer_auth(self.http_client.post(self.endpoint_url("chat/completions")))?
                 .json(&request)
                 .send()
                 .await
                 .map_err(|error| LlmError::ConnectionFailed {
                     message: error.to_string(),
                 })?;
+
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(LlmError::AuthFailed {
+                    message: format!(
+                        "{} rejected the configured API key",
+                        self.config.provider.display_name()
+                    ),
+                });
+            }
 
             if response.status() == reqwest::StatusCode::NOT_FOUND {
                 return Err(LlmError::ModelNotFound {
@@ -295,7 +376,125 @@ fn parse_sse_data_line(line: &str) -> Result<Option<String>, LlmError> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_sse_data_line;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    use crate::llm::{ConfiguredProvider, LlmProvider, Provider, StreamSink};
+
+    use super::{OpenAiCompatibleClient, parse_sse_data_line};
+
+    type CapturedHeaders = Vec<(String, String)>;
+    type CapturedRequest = (String, CapturedHeaders, String);
+    type SingleRequestServerHandle = thread::JoinHandle<CapturedRequest>;
+
+    fn provider_config(
+        provider: Provider,
+        base_url: String,
+        api_key: Option<&str>,
+    ) -> ConfiguredProvider {
+        ConfiguredProvider {
+            name: format!("{}-test", provider.value()),
+            provider,
+            model: "test-model".to_owned(),
+            base_url: Some(base_url),
+            api_key: api_key.map(str::to_owned),
+            timeout_secs: 30,
+        }
+    }
+
+    fn spawn_single_request_server(response: &'static str) -> (String, SingleRequestServerHandle) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test server");
+        let address = listener.local_addr().expect("read local addr");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut bytes = Vec::new();
+            let mut buffer = [0u8; 1024];
+
+            loop {
+                let read = stream.read(&mut buffer).expect("read request bytes");
+                if read == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&buffer[..read]);
+                if bytes.windows(4).any(|chunk| chunk == b"\r\n\r\n") {
+                    break;
+                }
+            }
+
+            let header_end = bytes
+                .windows(4)
+                .position(|chunk| chunk == b"\r\n\r\n")
+                .map(|index| index + 4)
+                .expect("request contains headers");
+            let header_text = String::from_utf8_lossy(&bytes[..header_end]).into_owned();
+            let content_length = header_text
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':').and_then(|(name, value)| {
+                        (name.trim().eq_ignore_ascii_case("content-length"))
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                })
+                .unwrap_or(0);
+
+            while bytes.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).expect("read request body bytes");
+                if read == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&buffer[..read]);
+            }
+
+            let request = String::from_utf8_lossy(&bytes).into_owned();
+            let (head, body) = request
+                .split_once("\r\n\r\n")
+                .expect("request contains headers");
+            let mut lines = head.lines();
+            let request_line = lines.next().expect("request line present").to_owned();
+            let headers = lines
+                .filter_map(|line| {
+                    line.split_once(':').map(|(name, value)| {
+                        (name.trim().to_ascii_lowercase(), value.trim().to_owned())
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+
+            (request_line, headers, body.to_owned())
+        });
+
+        (format!("http://{}", address), handle)
+    }
+
+    fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+        headers
+            .iter()
+            .find(|(header_name, _)| header_name == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    struct CollectingSink {
+        chunks: String,
+    }
+
+    impl CollectingSink {
+        fn new() -> Self {
+            Self {
+                chunks: String::new(),
+            }
+        }
+    }
+
+    impl StreamSink for CollectingSink {
+        fn on_chunk(&mut self, chunk: &str) {
+            self.chunks.push_str(chunk);
+        }
+    }
 
     #[test]
     fn parse_sse_data_line_extracts_content() {
@@ -311,5 +510,134 @@ mod tests {
         let parsed = parse_sse_data_line("data: [DONE]").expect("parse done marker");
 
         assert!(parsed.is_none());
+    }
+
+    #[tokio::test]
+    async fn local_openai_compatible_list_models_uses_v1_without_auth() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "content-type: application/json\r\n",
+            "content-length: 31\r\n",
+            "connection: close\r\n",
+            "\r\n",
+            "{\"data\":[{\"id\":\"local-model\"}]}"
+        );
+        let (base_url, handle) = spawn_single_request_server(response);
+        let client = OpenAiCompatibleClient::new(provider_config(
+            Provider::OpenAiCompatible,
+            base_url,
+            None,
+        ))
+        .expect("build client");
+
+        let models = client.list_models().await.expect("list models succeeds");
+        let (request_line, headers, _) = handle.join().expect("join server thread");
+
+        assert_eq!(models, vec!["local-model".to_owned()]);
+        assert_eq!(request_line, "GET /v1/models HTTP/1.1");
+        assert_eq!(header_value(&headers, "authorization"), None);
+    }
+
+    #[tokio::test]
+    async fn remote_openai_compatible_list_models_uses_base_root_and_bearer_auth() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "content-type: application/json\r\n",
+            "content-length: 32\r\n",
+            "connection: close\r\n",
+            "\r\n",
+            "{\"data\":[{\"id\":\"remote-model\"}]}"
+        );
+        let (server_url, handle) = spawn_single_request_server(response);
+        let client = OpenAiCompatibleClient::new(provider_config(
+            Provider::ZaiCodingPlanGlobal,
+            format!("{server_url}/api/coding/paas/v4"),
+            Some("secret-key"),
+        ))
+        .expect("build client");
+
+        let models = client.list_models().await.expect("list models succeeds");
+        let (request_line, headers, _) = handle.join().expect("join server thread");
+
+        assert_eq!(models, vec!["remote-model".to_owned()]);
+        assert_eq!(request_line, "GET /api/coding/paas/v4/models HTTP/1.1");
+        assert_eq!(
+            header_value(&headers, "authorization"),
+            Some("Bearer secret-key")
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_openai_compatible_chat_uses_base_root_and_bearer_auth() {
+        let body = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"echo hi\"}}]}";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let leaked_response: &'static str = Box::leak(response.into_boxed_str());
+        let (server_url, handle) = spawn_single_request_server(leaked_response);
+        let client = OpenAiCompatibleClient::new(provider_config(
+            Provider::ZaiCodingPlanGlobal,
+            format!("{server_url}/api/coding/paas/v4"),
+            Some("secret-key"),
+        ))
+        .expect("build client");
+
+        let command = client
+            .generate_command("say hi")
+            .await
+            .expect("generate command succeeds");
+        let (request_line, headers, body) = handle.join().expect("join server thread");
+
+        assert_eq!(command, "echo hi");
+        assert_eq!(
+            request_line,
+            "POST /api/coding/paas/v4/chat/completions HTTP/1.1"
+        );
+        assert_eq!(
+            header_value(&headers, "authorization"),
+            Some("Bearer secret-key")
+        );
+        assert!(body.contains("\"model\":\"test-model\""));
+        assert!(body.contains("\"stream\":false"));
+    }
+
+    #[tokio::test]
+    async fn remote_openai_compatible_stream_uses_base_root_and_bearer_auth() {
+        let body =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"echo streamed\"}}]}\n\ndata: [DONE]\n\n";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let leaked_response: &'static str = Box::leak(response.into_boxed_str());
+        let (server_url, handle) = spawn_single_request_server(leaked_response);
+        let client = OpenAiCompatibleClient::new(provider_config(
+            Provider::ZaiCodingPlanGlobal,
+            format!("{server_url}/api/coding/paas/v4"),
+            Some("secret-key"),
+        ))
+        .expect("build client");
+        let mut sink = CollectingSink::new();
+
+        let command = client
+            .stream_command("say hi", &mut sink)
+            .await
+            .expect("stream command succeeds");
+        let (request_line, headers, body) = handle.join().expect("join server thread");
+
+        assert_eq!(command, "echo streamed");
+        assert_eq!(sink.chunks, "echo streamed");
+        assert_eq!(
+            request_line,
+            "POST /api/coding/paas/v4/chat/completions HTTP/1.1"
+        );
+        assert_eq!(
+            header_value(&headers, "authorization"),
+            Some("Bearer secret-key")
+        );
+        assert!(body.contains("\"stream\":true"));
     }
 }

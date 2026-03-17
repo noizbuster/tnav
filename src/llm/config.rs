@@ -204,6 +204,22 @@ impl Provider {
             Self::ZaiCodingPlanChina => "z.ai Coding Plan (China)",
         }
     }
+
+    pub fn uses_api_key_storage(&self) -> bool {
+        match self {
+            Self::Ollama | Self::OpenAiCompatible => false,
+            Self::OpenAI
+            | Self::Anthropic
+            | Self::Google
+            | Self::Mistral
+            | Self::Groq
+            | Self::DeepSeek
+            | Self::XAI
+            | Self::Zai
+            | Self::ZaiCodingPlanGlobal
+            | Self::ZaiCodingPlanChina => true,
+        }
+    }
 }
 
 fn default_timeout_secs() -> u64 {
@@ -396,6 +412,22 @@ mod tests {
             Provider::ZaiCodingPlanChina.display_name(),
             "z.ai Coding Plan (China)"
         );
+    }
+
+    #[test]
+    fn provider_api_key_storage_flags() {
+        assert!(!Provider::Ollama.uses_api_key_storage());
+        assert!(!Provider::OpenAiCompatible.uses_api_key_storage());
+        assert!(Provider::OpenAI.uses_api_key_storage());
+        assert!(Provider::Anthropic.uses_api_key_storage());
+        assert!(Provider::Google.uses_api_key_storage());
+        assert!(Provider::Mistral.uses_api_key_storage());
+        assert!(Provider::Groq.uses_api_key_storage());
+        assert!(Provider::DeepSeek.uses_api_key_storage());
+        assert!(Provider::XAI.uses_api_key_storage());
+        assert!(Provider::Zai.uses_api_key_storage());
+        assert!(Provider::ZaiCodingPlanGlobal.uses_api_key_storage());
+        assert!(Provider::ZaiCodingPlanChina.uses_api_key_storage());
     }
 
     #[test]
