@@ -29,6 +29,7 @@ pub enum Command {
     Init,
     Connect,
     Model(ModelArgs),
+    History(HistoryArgs),
     Status,
     #[command(subcommand)]
     Auth(AuthCommand),
@@ -72,6 +73,21 @@ pub enum ProfileCommand {
 pub struct ModelArgs {
     #[arg(value_name = "MODEL")]
     pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct HistoryArgs {
+    /// Limit number of entries to show
+    #[arg(short = 'n', long, default_value = "20")]
+    pub limit: usize,
+
+    /// Clear history for current profile
+    #[arg(long)]
+    pub clear: bool,
+
+    /// Show raw JSON output
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Args)]

@@ -10,6 +10,7 @@ use crate::cli::GlobalArgs;
 use crate::commands::executor::execute_command;
 use crate::config::{llm_config_path, load_llm_config, save_llm_config};
 use crate::errors::TnavError;
+use crate::history::{HistoryEntry, append_entry, load_history};
 use crate::llm::{
     AnthropicClient, ConfiguredProvider, DEFAULT_PROVIDER_TIMEOUT_SECS, GoogleClient, LlmConfig,
     LlmError, LlmProvider, OllamaClient, OpenAiClient, OpenAiCompatibleClient, Provider,
@@ -18,8 +19,8 @@ use crate::llm::{
 use crate::output::Output;
 use crate::secrets::{KeyringSecretStore, SecretKind, SecretStore, SecretStoreError};
 use crate::ui::{
-    ConfirmResult, InquirePromptService, PromptOption, PromptService, confirm_execute_command,
-    edit_command, prompt_api_key, prompt_command_request,
+    ConfirmResult, InquirePromptService, PromptOption, PromptService, Readline, ReadlineError,
+    ReadlineResult, confirm_execute_command, edit_command, prompt_api_key,
 };
 
 const PREVIEW_CLEAR_HEADROOM_LINES: usize = 1;
@@ -41,8 +42,14 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
     };
 
     let mut prompts = InquirePromptService::new();
-    let question = match question {
-        Some(question) => question.to_owned(),
+    let profile = global
+        .profile
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let history_store = load_history(&profile)?;
+
+    let (question, cached_response) = match question {
+        Some(question) => (question.to_owned(), None),
         None if global.non_interactive => {
             return Err(TnavError::InvalidInput {
                 message:
@@ -50,15 +57,39 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
                         .to_owned(),
             });
         }
-        None => prompt_command_request(
-            &mut prompts,
-            &command_request_prompt_message(&provider_config),
-        )
-        .map_err(map_prompt_error)?,
+        None => {
+            let prompt_message = command_request_prompt_message(&provider_config);
+            let readline = Readline::new(&prompt_message, &history_store.entries);
+            let result: ReadlineResult = readline.read_line().map_err(|error| match error {
+                ReadlineError::Cancelled => TnavError::UserCancelled,
+                ReadlineError::IoError(message) => TnavError::InvalidInput {
+                    message: format!("failed to read input: {message}"),
+                },
+            })?;
+
+            let ReadlineResult {
+                line,
+                history_entry_id,
+                modified,
+            } = result;
+
+            let cached_response = match history_entry_id {
+                Some(entry_id) if !modified => history_store
+                    .find(&entry_id)
+                    .map(|entry| entry.response.clone()),
+                _ => None,
+            };
+
+            (line, cached_response)
+        }
     };
+
     let provider = build_provider(&provider_config)?;
     let llm_prompt = build_llm_request_prompt(&question, &gather_runtime_context());
-    let mut command = if output.is_json() || global.quiet {
+    let mut command = if let Some(cached) = cached_response.as_ref() {
+        output.line("Using cached response from history");
+        cached.clone()
+    } else if output.is_json() || global.quiet {
         provider
             .generate_command(&llm_prompt)
             .await
@@ -81,7 +112,20 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
         }
 
         match confirm_execute_command(&mut prompts, &command).map_err(map_prompt_error)? {
-            ConfirmResult::Execute => return execute_command(&command),
+            ConfirmResult::Execute => {
+                if cached_response.is_none() && !global.non_interactive {
+                    let entry = HistoryEntry::new(
+                        question.clone(),
+                        command.clone(),
+                        provider_config.name.clone(),
+                        provider_config.model.clone(),
+                    );
+                    if let Err(err) = append_entry(&profile, entry) {
+                        tracing::warn!(error = %err, "Failed to save history entry");
+                    }
+                }
+                return execute_command(&command);
+            }
             ConfirmResult::Edit => {
                 if !output.is_json() {
                     output.clear_rendered_lines(
@@ -257,12 +301,6 @@ fn render_connect_sections(output: &Output, config: &LlmConfig) {
                 )
             ));
         }
-    }
-
-    output.line("");
-    output.yellow_heading("Available providers");
-    for provider in available_providers() {
-        output.line(format!("  - {}", provider.display_name()));
     }
     output.line("");
 }

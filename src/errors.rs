@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 use thiserror::Error;
 
+use crate::history::HistoryError;
+
 #[derive(Debug, Error)]
 pub enum TnavError {
     #[error("operation cancelled by user")]
@@ -29,6 +31,16 @@ pub enum TnavError {
     UnsupportedMode { message: String },
     #[error("command failed: {message}")]
     CommandFailed { message: String },
+    #[error("history operation failed: {message}")]
+    HistoryError { message: String },
+}
+
+impl From<HistoryError> for TnavError {
+    fn from(err: HistoryError) -> Self {
+        TnavError::HistoryError {
+            message: err.to_string(),
+        }
+    }
 }
 
 impl TnavError {
@@ -46,7 +58,8 @@ impl TnavError {
             | Self::OAuthStateMismatch
             | Self::OAuthExchangeFailed { .. }
             | Self::NetworkError { .. }
-            | Self::CommandFailed { .. } => ExitCode::from(1),
+            | Self::CommandFailed { .. }
+            | Self::HistoryError { .. } => ExitCode::from(1),
         }
     }
 }

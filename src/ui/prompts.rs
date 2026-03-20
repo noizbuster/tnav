@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::Command as ProcessCommand;
 
 use inquire::error::InquireError;
+use inquire::ui::{Color, RenderConfig, StyleSheet};
 use inquire::validator::Validation;
 use inquire::{Confirm, MultiSelect, Password, PasswordDisplayMode, Select, Text};
 use tempfile::Builder;
@@ -87,6 +88,7 @@ pub trait PromptService {
     fn prompt_api_key(&mut self) -> PromptResult<String>;
     fn prompt_command_request(&mut self, message: &str) -> PromptResult<String>;
     fn select_provider(&mut self, providers: &[PromptOption]) -> PromptResult<String>;
+    fn select_from_list(&mut self, prompt: &str, options: &[PromptOption]) -> PromptResult<String>;
     fn multiselect_scopes(
         &mut self,
         scopes: &[PromptOption],
@@ -120,6 +122,14 @@ pub fn select_provider(
     providers: &[PromptOption],
 ) -> PromptResult<String> {
     prompts.select_provider(providers)
+}
+
+pub fn select_from_list(
+    prompts: &mut impl PromptService,
+    prompt: &str,
+    options: &[PromptOption],
+) -> PromptResult<String> {
+    prompts.select_from_list(prompt, options)
 }
 
 pub fn multiselect_scopes(
@@ -210,6 +220,26 @@ impl PromptService for InquirePromptService {
         )
     }
 
+    fn select_from_list(
+        &mut self,
+        prompt_message: &str,
+        options: &[PromptOption],
+    ) -> PromptResult<String> {
+        ensure_non_empty("list selection", options)?;
+
+        let render_config = RenderConfig {
+            prompt: StyleSheet::default().with_fg(Color::LightYellow),
+            ..Default::default()
+        };
+
+        let prompt = Select::new(prompt_message, options.to_vec())
+            .with_render_config(render_config)
+            .without_filtering()
+            .with_page_size(page_size(options.len()));
+
+        map_prompt_result("list selection", prompt.prompt().map(|choice| choice.value))
+    }
+
     fn multiselect_scopes(
         &mut self,
         scopes: &[PromptOption],
@@ -284,6 +314,7 @@ pub struct ScriptedPromptService {
     api_keys: VecDeque<PromptResult<String>>,
     command_requests: VecDeque<PromptResult<String>>,
     providers: VecDeque<PromptResult<String>>,
+    list_selections: VecDeque<PromptResult<String>>,
     scope_sets: VecDeque<PromptResult<Vec<String>>>,
     overwrite_decisions: VecDeque<PromptResult<bool>>,
     command_confirmations: VecDeque<PromptResult<ConfirmResult>>,
@@ -312,6 +343,11 @@ impl ScriptedPromptService {
 
     pub fn push_provider(&mut self, value: PromptResult<String>) -> &mut Self {
         self.providers.push_back(value);
+        self
+    }
+
+    pub fn push_list_selection(&mut self, value: PromptResult<String>) -> &mut Self {
+        self.list_selections.push_back(value);
         self
     }
 
@@ -371,6 +407,24 @@ impl PromptService for ScriptedPromptService {
             Err(PromptError::PromptFailed {
                 prompt: "provider selection",
                 message: format!("unknown scripted provider '{value}'"),
+            })
+        }
+    }
+
+    fn select_from_list(
+        &mut self,
+        _prompt: &str,
+        options: &[PromptOption],
+    ) -> PromptResult<String> {
+        ensure_non_empty("list selection", options)?;
+
+        let value = Self::next(&mut self.list_selections, "list selection")?;
+        if options.iter().any(|option| option.value() == value) {
+            Ok(value)
+        } else {
+            Err(PromptError::PromptFailed {
+                prompt: "list selection",
+                message: format!("unknown scripted option '{value}'"),
             })
         }
     }

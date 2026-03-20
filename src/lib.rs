@@ -4,6 +4,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod errors;
+pub mod history;
 pub mod llm;
 pub mod output;
 pub mod profiles;

@@ -2,6 +2,7 @@ pub mod ask;
 pub mod auth;
 pub mod doctor;
 pub mod executor;
+pub mod history;
 pub mod init;
 pub mod status;
 
