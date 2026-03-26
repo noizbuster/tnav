@@ -102,7 +102,7 @@ async fn run_api_key(global: &GlobalArgs) -> Result<(), TnavError> {
     }
 
     output.line(format!(
-        "Stored API key for profile '{}' ({}) as {}",
+        "Stored the API key for profile '{}' ({}) as {}",
         profile_name,
         profile.provider,
         redact_secret(&api_key)
@@ -128,7 +128,7 @@ async fn run_login(global: &GlobalArgs) -> Result<(), TnavError> {
 
     if !matches!(profile.auth_method, AuthMethod::OAuth) {
         return Err(TnavError::InvalidInput {
-            message: format!("profile '{profile_name}' is not configured for OAuth login"),
+            message: format!("profile '{profile_name}' is not configured for OAuth sign-in"),
         });
     }
 
@@ -149,19 +149,19 @@ async fn run_login(global: &GlobalArgs) -> Result<(), TnavError> {
         let browser_outcome = oauth_service.browser().open(&request.authorization_url);
         opened_browser = browser_outcome.opened;
         if !browser_outcome.opened && !output.is_json() {
-            output.line("Browser launch failed. Open this URL manually:");
+            output.line("Couldn't open a browser automatically. Open this URL to continue:");
             output.line(&request.authorization_url);
             if let Some(failure) = browser_outcome.failure {
-                output.line(format!("Browser error: {failure}"));
+                output.line(format!("Browser opener error: {failure}"));
             }
         }
     } else if !output.is_json() {
-        output.line("Open this URL to continue OAuth login:");
+        output.line("Open this URL to continue signing in:");
         output.line(&request.authorization_url);
     }
 
     if !output.is_json() {
-        output.line("Waiting for the localhost OAuth callback...");
+        output.line("Waiting for the local OAuth callback...");
     }
 
     let callback_result = oauth_service
@@ -199,7 +199,7 @@ async fn run_login(global: &GlobalArgs) -> Result<(), TnavError> {
     }
 
     output.line(format!(
-        "OAuth login complete for profile '{}' ({})",
+        "OAuth sign-in complete for profile '{}' ({})",
         profile_name, provider.name
     ));
     Ok(())

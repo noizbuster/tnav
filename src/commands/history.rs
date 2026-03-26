@@ -48,9 +48,9 @@ pub async fn run(global: &GlobalArgs, args: &HistoryArgs) -> Result<(), TnavErro
     }
 
     if store.entries.is_empty() {
-        output.line("No history entries for this profile.");
+        output.line("No saved history entries for this profile yet.");
         output.line("");
-        output.line("Run some commands first, then use 'tnav history' to recall them.");
+        output.line("Run a few commands first, then use 'tnav history' to reuse them.");
         return Ok(());
     }
 
@@ -109,7 +109,7 @@ fn clear_history(profile: &str, output: &Output) -> Result<(), TnavError> {
     save_history(&empty_store)?;
 
     tracing::debug!(profile = %profile, "Cleared history store");
-    output.line(format!("History cleared for profile '{}'.", profile));
+    output.line(format!("Cleared saved history for profile '{}'.", profile));
 
     Ok(())
 }
@@ -136,7 +136,7 @@ fn select_history_entry(
     options.push(PromptOption::new("cancel", "Cancel"));
 
     let selected = prompts
-        .select_from_list("Select a history entry:", &options)
+        .select_from_list("Choose a history entry:", &options)
         .map_err(map_prompt_error)?;
     if selected == "cancel" {
         return Ok(None);
@@ -154,20 +154,18 @@ fn select_history_entry(
 }
 
 fn display_entry_details(output: &Output, entry: &HistoryEntry) {
-    output.green_heading("History Entry");
+    output.green_heading("Saved history entry");
     output.line(format!(
-        "Time: {}",
+        "Saved: {}",
         entry.timestamp.format("%Y-%m-%d %H:%M:%S")
     ));
-    output.line(format!(
-        "Provider: {} / {}",
-        entry.provider_name, entry.model
-    ));
+    output.line(format!("Provider: {}", entry.provider_name));
+    output.line(format!("Model: {}", entry.model));
     output.line("");
-    output.yellow_heading("Prompt");
+    output.yellow_heading("Request");
     output.line(format!("  {}", entry.prompt));
     output.line("");
-    output.yellow_heading("Response");
+    output.yellow_heading("Saved command");
 }
 
 fn truncate_string(input: &str, max_len: usize) -> String {

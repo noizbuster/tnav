@@ -11,6 +11,9 @@ use crossterm::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+const PROMPT_PREFIX: &str = "? ";
+const PROMPT_PREFIX_WIDTH: usize = 2;
+
 pub struct Readline<'a> {
     prompt: &'a str,
     history: &'a [HistoryEntry],
@@ -142,7 +145,7 @@ impl<'a> Readline<'a> {
 
                 match key_event.code {
                     KeyCode::Enter => {
-                        writeln!(stdout)?;
+                        finish_input_line(&mut stdout)?;
                         return Ok(ReadlineResult {
                             line: current_input,
                             history_entry_id: from_history_id,
@@ -152,7 +155,7 @@ impl<'a> Readline<'a> {
                     KeyCode::Char(c) => {
                         if key_event.modifiers.contains(KeyModifiers::CONTROL) {
                             if c.eq_ignore_ascii_case(&'c') {
-                                let _ = writeln!(stdout);
+                                let _ = finish_input_line(&mut stdout);
                                 return Err(ReadlineError::Cancelled);
                             }
                             continue;
@@ -280,7 +283,7 @@ impl<'a> Readline<'a> {
                         }
                     }
                     KeyCode::Esc => {
-                        let _ = writeln!(stdout);
+                        let _ = finish_input_line(&mut stdout);
                         return Err(ReadlineError::Cancelled);
                     }
                     _ => {}
@@ -309,7 +312,11 @@ fn render_line(
         stdout,
         MoveToColumn(0),
         Clear(ClearType::CurrentLine),
+        SetForegroundColor(Color::Green),
+        Print(PROMPT_PREFIX),
+        SetForegroundColor(Color::Cyan),
         Print(prompt),
+        ResetColor,
     )?;
 
     if is_recalled {
@@ -322,7 +329,7 @@ fn render_line(
         queue!(stdout, ResetColor)?;
     }
 
-    let prompt_width = prompt.width();
+    let prompt_width = rendered_prompt_width(prompt);
     let cursor_width = cursor.display_width();
     let target_column = prompt_width
         .saturating_add(cursor_width)
@@ -331,6 +338,16 @@ fn render_line(
     queue!(stdout, MoveToColumn(target_column))?;
     stdout.flush()?;
     Ok(())
+}
+
+fn finish_input_line(stdout: &mut impl Write) -> Result<(), ReadlineError> {
+    write!(stdout, "\r\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn rendered_prompt_width(prompt: &str) -> usize {
+    PROMPT_PREFIX_WIDTH + prompt.width()
 }
 
 fn load_previous_history(
@@ -572,5 +589,19 @@ mod tests {
         assert_eq!(next_char_boundary(input, 0), "a".len());
         assert_eq!(next_char_boundary(input, "a".len()), "a😊".len());
         assert_eq!(next_char_boundary(input, "a😊".len()), input.len());
+    }
+
+    #[test]
+    fn rendered_prompt_width_includes_visual_prefix() {
+        assert_eq!(rendered_prompt_width("Ask tnav:"), 11);
+    }
+
+    #[test]
+    fn finish_input_line_writes_carriage_return_and_newline() {
+        let mut output = Vec::new();
+
+        finish_input_line(&mut output).expect("should write prompt terminator");
+
+        assert_eq!(output, b"\r\n");
     }
 }

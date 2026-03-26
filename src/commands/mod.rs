@@ -10,7 +10,7 @@ use crate::auth::AuthError;
 use crate::config::{Config, ConfigError};
 use crate::errors::TnavError;
 use crate::secrets::SecretStoreError;
-use crate::ui::{PromptError, PromptOption, PromptService, select_provider};
+use crate::ui::{PromptError, PromptOption, PromptService, select_from_list};
 
 pub fn unsupported(command: &str) -> Result<(), TnavError> {
     Err(TnavError::UnsupportedMode {
@@ -123,5 +123,5 @@ pub(crate) fn resolve_profile_name(
         .collect::<Vec<_>>();
     options.sort_by(|left, right| left.label().cmp(right.label()));
 
-    select_provider(prompts, &options).map_err(map_prompt_error)
+    select_from_list(prompts, "Choose a profile:", &options).map_err(map_prompt_error)
 }

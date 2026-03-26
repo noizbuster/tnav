@@ -25,8 +25,8 @@ pub enum ConfirmResult {
 impl Display for ConfirmResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Execute => f.write_str("Execute"),
-            Self::Edit => f.write_str("Edit"),
+            Self::Execute => f.write_str("Run command"),
+            Self::Edit => f.write_str("Edit before running"),
             Self::Cancel => f.write_str("Cancel"),
         }
     }
@@ -164,10 +164,40 @@ impl InquirePromptService {
     }
 }
 
+fn shared_render_config() -> RenderConfig<'static> {
+    RenderConfig {
+        prompt: StyleSheet::default().with_fg(Color::LightCyan),
+        ..Default::default()
+    }
+}
+
+pub(crate) fn styled_text<'a>(message: &'a str) -> Text<'a, 'a> {
+    Text::new(message).with_render_config(shared_render_config())
+}
+
+pub(crate) fn styled_select<'a, T: Display>(message: &'a str, options: Vec<T>) -> Select<'a, T> {
+    Select::new(message, options).with_render_config(shared_render_config())
+}
+
+pub(crate) fn styled_multiselect<'a, T: Display>(
+    message: &'a str,
+    options: Vec<T>,
+) -> MultiSelect<'a, T> {
+    MultiSelect::new(message, options).with_render_config(shared_render_config())
+}
+
+pub(crate) fn styled_confirm<'a>(message: &'a str) -> Confirm<'a> {
+    Confirm::new(message).with_render_config(shared_render_config())
+}
+
+pub(crate) fn styled_password<'a>(message: &'a str) -> Password<'a> {
+    Password::new(message).with_render_config(shared_render_config())
+}
+
 impl PromptService for InquirePromptService {
     fn prompt_profile_name(&mut self, default: Option<&str>) -> PromptResult<String> {
-        let mut prompt = Text::new("Profile name:")
-            .with_help_message("Enter a short name to identify this saved profile.")
+        let mut prompt = styled_text("Profile name:")
+            .with_help_message("Choose the name tnav should use when saving this profile.")
             .with_validator(profile_name_validator);
 
         if let Some(default) = default.filter(|value| !value.trim().is_empty()) {
@@ -183,7 +213,7 @@ impl PromptService for InquirePromptService {
     fn prompt_api_key(&mut self) -> PromptResult<String> {
         let prompt = build_api_key_prompt(
             "API key:",
-            "Paste the API key exactly as issued. Input is masked; press Ctrl+R to reveal temporarily.",
+            "Paste the API key exactly as issued. Input stays masked; press Ctrl+R to reveal it briefly.",
         )
         .with_validator(api_key_validator);
 
@@ -194,12 +224,12 @@ impl PromptService for InquirePromptService {
     }
 
     fn prompt_command_request(&mut self, message: &str) -> PromptResult<String> {
-        let prompt = Text::new(message)
-            .with_help_message("Describe what shell command you want tnav to generate.")
+        let prompt = styled_text(message)
+            .with_help_message("Describe the shell task you want tnav to turn into a command.")
             .with_validator(command_request_validator);
 
         map_prompt_result(
-            "prompt request",
+            "command request",
             prompt
                 .prompt()
                 .map(|value| normalize_command_request(&value)),
@@ -209,8 +239,8 @@ impl PromptService for InquirePromptService {
     fn select_provider(&mut self, providers: &[PromptOption]) -> PromptResult<String> {
         ensure_non_empty("provider selection", providers)?;
 
-        let prompt = Select::new("Provider:", providers.to_vec())
-            .with_help_message("Choose the provider to use for this profile.")
+        let prompt = styled_select("Choose a provider:", providers.to_vec())
+            .with_help_message("Choose the provider to use for this step.")
             .without_filtering()
             .with_page_size(page_size(providers.len()));
 
@@ -227,13 +257,8 @@ impl PromptService for InquirePromptService {
     ) -> PromptResult<String> {
         ensure_non_empty("list selection", options)?;
 
-        let render_config = RenderConfig {
-            prompt: StyleSheet::default().with_fg(Color::LightYellow),
-            ..Default::default()
-        };
-
-        let prompt = Select::new(prompt_message, options.to_vec())
-            .with_render_config(render_config)
+        let prompt = styled_select(prompt_message, options.to_vec())
+            .with_help_message("Use the arrow keys to choose an option, then press Enter.")
             .without_filtering()
             .with_page_size(page_size(options.len()));
 
@@ -254,8 +279,8 @@ impl PromptService for InquirePromptService {
             .filter_map(|(index, scope)| default_set.contains(scope.value()).then_some(index))
             .collect::<Vec<_>>();
 
-        let prompt = MultiSelect::new("Scopes:", scopes.to_vec())
-            .with_help_message("Use space to toggle scopes, then press enter to continue.")
+        let prompt = styled_multiselect("Scopes to request:", scopes.to_vec())
+            .with_help_message("Use Space to toggle scopes, then press Enter to continue.")
             .with_page_size(page_size(scopes.len()));
 
         let prompt = if default_indexes.is_empty() {
@@ -273,11 +298,11 @@ impl PromptService for InquirePromptService {
     }
 
     fn confirm_overwrite(&mut self, target: &str) -> PromptResult<bool> {
-        let message = format!("Overwrite existing {target}?");
+        let message = format!("Replace saved {target}?");
 
-        let prompt = Confirm::new(&message)
+        let prompt = styled_confirm(&message)
             .with_default(false)
-            .with_help_message("This replaces the current saved value.");
+            .with_help_message("This will overwrite the current saved value.");
 
         map_prompt_result("overwrite confirmation", prompt.prompt())
     }
@@ -288,8 +313,8 @@ impl PromptService for InquirePromptService {
             ConfirmResult::Edit,
             ConfirmResult::Cancel,
         ];
-        let prompt = Select::new("Action:", options)
-            .with_help_message("Use the generated shell code shown above.")
+        let prompt = styled_select("Next step:", options)
+            .with_help_message("Run the draft as-is, edit it first, or cancel.")
             .without_filtering();
 
         map_prompt_result("command confirmation", prompt.prompt())
@@ -300,8 +325,8 @@ impl PromptService for InquirePromptService {
     }
 }
 
-fn build_api_key_prompt<'a>(message: &'a str, help_message: &'a str) -> Password<'a> {
-    Password::new(message)
+pub(crate) fn build_api_key_prompt<'a>(message: &'a str, help_message: &'a str) -> Password<'a> {
+    styled_password(message)
         .without_confirmation()
         .with_display_mode(PasswordDisplayMode::Masked)
         .with_display_toggle_enabled()
@@ -393,7 +418,7 @@ impl PromptService for ScriptedPromptService {
     }
 
     fn prompt_command_request(&mut self, _message: &str) -> PromptResult<String> {
-        let value = Self::next(&mut self.command_requests, "prompt request")?;
+        let value = Self::next(&mut self.command_requests, "command request")?;
         validate_command_request(&value)
     }
 
@@ -516,7 +541,7 @@ fn api_key_validator(input: &str) -> Result<Validation, inquire::CustomUserError
 
 fn command_request_validator(input: &str) -> Result<Validation, inquire::CustomUserError> {
     if normalize_command_request(input).is_empty() {
-        return Ok(Validation::Invalid("Prompt cannot be empty.".into()));
+        return Ok(Validation::Invalid("Request cannot be empty.".into()));
     }
 
     Ok(Validation::Valid)
@@ -550,8 +575,8 @@ fn validate_command_request(input: &str) -> PromptResult<String> {
     let normalized = normalize_command_request(input);
     if normalized.is_empty() {
         return Err(PromptError::PromptFailed {
-            prompt: "prompt request",
-            message: "prompt cannot be empty".to_owned(),
+            prompt: "command request",
+            message: "request cannot be empty".to_owned(),
         });
     }
 
@@ -696,7 +721,7 @@ mod tests {
     fn api_key_prompt_masks_input_and_allows_reveal_toggle() {
         let prompt = build_api_key_prompt(
             "API key:",
-            "Paste the API key exactly as issued. Input is masked; press Ctrl+R to reveal temporarily.",
+            "Paste the API key exactly as issued. Input stays masked; press Ctrl+R to reveal it briefly.",
         );
 
         assert_eq!(prompt.display_mode, PasswordDisplayMode::Masked);
@@ -756,5 +781,12 @@ mod tests {
         let error = validate_edited_command("\n\n").unwrap_err();
 
         assert!(matches!(error, PromptError::PromptFailed { .. }));
+    }
+
+    #[test]
+    fn confirm_result_labels_use_guided_microcopy() {
+        assert_eq!(ConfirmResult::Execute.to_string(), "Run command");
+        assert_eq!(ConfirmResult::Edit.to_string(), "Edit before running");
+        assert_eq!(ConfirmResult::Cancel.to_string(), "Cancel");
     }
 }

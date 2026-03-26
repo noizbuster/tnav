@@ -4,8 +4,6 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
-use inquire::{Confirm, Password, PasswordDisplayMode, Select, Text};
-
 use crate::cli::GlobalArgs;
 use crate::commands::executor::execute_command;
 use crate::config::{llm_config_path, load_llm_config, save_llm_config};
@@ -20,12 +18,15 @@ use crate::output::Output;
 use crate::secrets::{KeyringSecretStore, SecretKind, SecretStore, SecretStoreError};
 use crate::ui::{
     ConfirmResult, InquirePromptService, PromptOption, PromptService, Readline, ReadlineError,
-    ReadlineResult, confirm_execute_command, edit_command, prompt_api_key,
+    ReadlineResult, build_api_key_prompt, confirm_execute_command, edit_command, prompt_api_key,
+    styled_confirm, styled_select, styled_text,
 };
 
 const PREVIEW_CLEAR_HEADROOM_LINES: usize = 1;
-const CONNECT_ROOT_HELP: &str = "Choose a configured provider to connect/edit/delete, pick an available provider to add, or finish connect setup.";
-const CONNECT_ACTION_HELP: &str = "Choose how to manage the selected provider.";
+const HISTORY_REUSE_NOTICE: &str = "Reusing the saved response from history.";
+const CONNECT_ROOT_HELP: &str =
+    "Choose a saved connection to manage, add another provider, or finish setup.";
+const CONNECT_ACTION_HELP: &str = "Choose what you'd like to do with this saved connection.";
 
 pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), TnavError> {
     let output = Output::new(global);
@@ -86,8 +87,9 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
 
     let provider = build_provider(&provider_config)?;
     let llm_prompt = build_llm_request_prompt(&question, &gather_runtime_context());
+    let mut show_history_reuse_notice = false;
     let mut command = if let Some(cached) = cached_response.as_ref() {
-        output.line("Using cached response from history");
+        show_history_reuse_notice = true;
         cached.clone()
     } else if output.is_json() || global.quiet {
         provider
@@ -95,7 +97,7 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
             .await
             .map_err(map_llm_error)?
     } else {
-        let mut progress = GenerationProgress::new(&output, "Generating shell code");
+        let mut progress = GenerationProgress::new(&output, "Drafting shell command");
         let command = provider
             .stream_command(&llm_prompt, &mut progress)
             .await
@@ -108,11 +110,19 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
 
     loop {
         if !output.is_json() {
-            rendered_preview_lines = output.command_preview(&command);
+            rendered_preview_lines = output.command_preview_with_notice(
+                &command,
+                show_history_reuse_notice.then_some(HISTORY_REUSE_NOTICE),
+            );
         }
 
         match confirm_execute_command(&mut prompts, &command).map_err(map_prompt_error)? {
             ConfirmResult::Execute => {
+                if !output.is_json() {
+                    output.clear_rendered_lines(
+                        rendered_preview_lines.saturating_add(PREVIEW_CLEAR_HEADROOM_LINES),
+                    );
+                }
                 if cached_response.is_none() && !global.non_interactive {
                     let entry = HistoryEntry::new(
                         question.clone(),
@@ -133,6 +143,7 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
                     );
                     rendered_preview_lines = 0;
                 }
+                show_history_reuse_notice = false;
                 command = edit_command(&mut prompts, &command).map_err(map_prompt_error)?;
             }
             ConfirmResult::Cancel => return Err(TnavError::UserCancelled),
@@ -183,7 +194,7 @@ impl StreamSink for GenerationProgress<'_> {
         }
 
         if !self.saw_chunk {
-            self.output.line("Streaming response:");
+            self.output.yellow_heading("Draft command");
             self.saw_chunk = true;
         }
 
@@ -229,7 +240,7 @@ pub async fn run_connect(global: &GlobalArgs) -> Result<(), TnavError> {
 
         if flow.changed {
             let path = save_llm_config(&config).map_err(map_llm_config_error)?;
-            output.line(format!("Saved LLM provider config to {}", path.display()));
+            output.line(format!("Saved connection settings to {}", path.display()));
         }
 
         if !flow.stay_in_menu {
@@ -288,9 +299,9 @@ struct ConnectFlow {
 }
 
 fn render_connect_sections(output: &Output, config: &LlmConfig) {
-    output.green_heading("Configured providers");
+    output.green_heading("Saved connections");
     if config.providers.is_empty() {
-        output.line("  - (none)");
+        output.line("  - No saved connections yet");
     } else {
         for provider in &config.providers {
             output.line(format!(
@@ -307,7 +318,7 @@ fn render_connect_sections(output: &Output, config: &LlmConfig) {
 
 fn prompt_connect_selection(config: &LlmConfig) -> Result<ConnectSelection, TnavError> {
     let options = connect_menu_options(config);
-    let selected = select_option("Connect:", CONNECT_ROOT_HELP, options)?;
+    let selected = select_option("Provider setup:", CONNECT_ROOT_HELP, options)?;
 
     parse_connect_selection(&selected)
 }
@@ -333,7 +344,7 @@ fn connect_menu_options(config: &LlmConfig) -> Vec<PromptOption> {
         ));
     }
 
-    options.push(PromptOption::new("done", "Done"));
+    options.push(PromptOption::new("done", "Finish setup"));
 
     options
 }
@@ -382,10 +393,10 @@ fn parse_provider_value(value: &str) -> Result<Provider, TnavError> {
 fn configured_provider_label(config: &ConfiguredProvider, active: bool) -> String {
     let mut label = format!("{} [{}]", config.name, config.provider.value());
     if active {
-        label.push_str(" (Connected)");
+        label.push_str(" | active");
     }
     if config.model.trim().is_empty() {
-        label.push_str(" [No model]");
+        label.push_str(" | no model selected");
     }
     label
 }
@@ -415,10 +426,7 @@ async fn manage_provider(
     match action {
         ManageProviderAction::Connect => {
             config.set_active_provider(&provider_config.name);
-            output.line(format!(
-                "Connected provider set to {}",
-                provider_config.name
-            ));
+            output.line(format!("Now using provider '{}'.", provider_config.name));
             Ok(ConnectFlow {
                 changed: true,
                 stay_in_menu: false,
@@ -458,12 +466,12 @@ async fn manage_provider(
                 )?;
                 if persistence == ApiKeyPersistence::InlineConfig {
                     output.line(format!(
-                        "Secure storage could not be verified for {}. Saved the API key in llm.toml instead.",
+                        "Could not verify secure storage for {}. Saved the API key in llm.toml instead.",
                         updated_name
                     ));
                 }
             }
-            output.line(format!("Updated {} provider settings", updated_name));
+            output.line(format!("Updated saved connection '{}'.", updated_name));
             Ok(ConnectFlow {
                 changed: true,
                 stay_in_menu: true,
@@ -471,8 +479,8 @@ async fn manage_provider(
         }
         ManageProviderAction::Delete => {
             let confirmed = confirm_action(
-                &format!("Delete provider '{}' ?", provider_config.name),
-                Some("This removes the saved provider configuration."),
+                &format!("Delete saved connection '{}'?", provider_config.name),
+                Some("This removes the saved provider settings."),
             )?;
             if confirmed {
                 config.remove_provider(&provider_config.name);
@@ -481,7 +489,10 @@ async fn manage_provider(
                         .delete_secret(&provider_config.secret_profile_key(), SecretKind::ApiKey)
                         .map_err(map_secret_store_error)?;
                 }
-                output.line(format!("Deleted {} provider", provider_config.name));
+                output.line(format!(
+                    "Deleted saved connection '{}'.",
+                    provider_config.name
+                ));
                 Ok(ConnectFlow {
                     changed: true,
                     stay_in_menu: true,
@@ -502,12 +513,12 @@ fn prompt_manage_provider_action(
 ) -> Result<ManageProviderAction, TnavError> {
     let mut options = Vec::new();
     if !connected {
-        options.push(PromptOption::new("connect", "Connect this provider"));
+        options.push(PromptOption::new("connect", "Use this provider"));
     }
-    options.push(PromptOption::new("edit", "Edit provider settings"));
-    options.push(PromptOption::new("delete", "Delete provider"));
+    options.push(PromptOption::new("edit", "Edit this connection"));
+    options.push(PromptOption::new("delete", "Delete this connection"));
 
-    let selected = select_option("Provider action:", CONNECT_ACTION_HELP, options)?;
+    let selected = select_option("Connection action:", CONNECT_ACTION_HELP, options)?;
 
     match selected.as_str() {
         "connect" => Ok(ManageProviderAction::Connect),
@@ -544,12 +555,15 @@ async fn add_provider(
         )?;
         if persistence == ApiKeyPersistence::InlineConfig {
             output.line(format!(
-                "Secure storage could not be verified for {}. Saved the API key in llm.toml instead.",
+                "Could not verify secure storage for {}. Saved the API key in llm.toml instead.",
                 provider_name
             ));
         }
     }
-    output.line(format!("Added and connected {}", provider_name));
+    output.line(format!(
+        "Saved and selected connection '{}'.",
+        provider_name
+    ));
     Ok(())
 }
 
@@ -568,8 +582,8 @@ fn prompt_provider_configuration(
         .and_then(|config| config.base_url.as_deref())
         .unwrap_or_else(|| provider.default_base_url());
     let customized_base_url = prompt_text_value(
-        "Base URL:",
-        Some("Edit the provider base URL. Leave the default value as-is to use the built-in URL."),
+        "Provider base URL:",
+        Some("Leave the default as-is unless this provider uses a different endpoint."),
         Some(default_base_url),
     )?;
 
@@ -585,14 +599,14 @@ fn prompt_provider_configuration(
                 prompt_optional_secret_value(
                     "API key (leave blank to keep current):",
                     Some(
-                        "Enter a new OpenAI API key only if you want to replace the stored one. Input is masked; press Ctrl+R to reveal temporarily.",
+                        "Enter a new OpenAI API key only if you want to replace the saved one. Input stays masked; press Ctrl+R to reveal it briefly.",
                     ),
                 )?
             } else {
                 Some(prompt_required_secret_value(
                     "API key:",
                     Some(
-                        "Paste the OpenAI API key for this provider. Input is masked; press Ctrl+R to reveal temporarily.",
+                        "Paste the OpenAI API key for this connection. Input stays masked; press Ctrl+R to reveal it briefly.",
                     ),
                 )?)
             }
@@ -611,14 +625,14 @@ fn prompt_provider_configuration(
                 prompt_optional_secret_value(
                     "API key (leave blank to keep current):",
                     Some(
-                        "Enter a new API key only if you want to replace the stored one. Input is masked; press Ctrl+R to reveal temporarily.",
+                        "Enter a new API key only if you want to replace the saved one. Input stays masked; press Ctrl+R to reveal it briefly.",
                     ),
                 )?
             } else {
                 Some(prompt_required_secret_value(
                     "API key:",
                     Some(
-                        "Paste the API key for this provider. Input is masked; press Ctrl+R to reveal temporarily.",
+                        "Paste the API key for this connection. Input stays masked; press Ctrl+R to reveal it briefly.",
                     ),
                 )?)
             }
@@ -741,8 +755,8 @@ fn prompt_provider_name(
     existing_names: &[String],
 ) -> Result<String, TnavError> {
     let value = prompt_text_value(
-        "Connection name:",
-        Some("Use a unique name to distinguish this provider instance."),
+        "Saved connection name:",
+        Some("Use a unique name to tell saved provider connections apart."),
         Some(default_name),
     )?;
 
@@ -785,10 +799,11 @@ fn select_option(
         });
     }
 
-    let prompt = Select::new(message, options)
+    let page_size = options.len().clamp(1, 10);
+    let prompt = styled_select(message, options)
         .with_help_message(help)
         .without_filtering()
-        .with_page_size(10);
+        .with_page_size(page_size);
 
     prompt
         .prompt()
@@ -801,7 +816,7 @@ fn prompt_text_value(
     help: Option<&'static str>,
     default: Option<&str>,
 ) -> Result<String, TnavError> {
-    let mut prompt = Text::new(message);
+    let mut prompt = styled_text(message);
     if let Some(help) = help {
         prompt = prompt.with_help_message(help);
     }
@@ -819,10 +834,7 @@ fn prompt_required_secret_value(
     message: &'static str,
     help: Option<&'static str>,
 ) -> Result<String, TnavError> {
-    let mut prompt = api_key_password_prompt(message);
-    if let Some(help) = help {
-        prompt = prompt.with_help_message(help);
-    }
+    let prompt = build_api_key_prompt(message, help.unwrap_or_default());
 
     let value = prompt
         .prompt()
@@ -842,10 +854,7 @@ fn prompt_optional_secret_value(
     message: &'static str,
     help: Option<&'static str>,
 ) -> Result<Option<String>, TnavError> {
-    let mut prompt = api_key_password_prompt(message);
-    if let Some(help) = help {
-        prompt = prompt.with_help_message(help);
-    }
+    let prompt = build_api_key_prompt(message, help.unwrap_or_default());
 
     let value = prompt
         .prompt()
@@ -859,15 +868,8 @@ fn prompt_optional_secret_value(
     }
 }
 
-fn api_key_password_prompt(message: &'static str) -> Password<'static> {
-    Password::new(message)
-        .without_confirmation()
-        .with_display_mode(PasswordDisplayMode::Masked)
-        .with_display_toggle_enabled()
-}
-
 fn confirm_action(message: &str, help: Option<&'static str>) -> Result<bool, TnavError> {
-    let mut prompt = Confirm::new(message).with_default(false);
+    let mut prompt = styled_confirm(message).with_default(false);
     if let Some(help) = help {
         prompt = prompt.with_help_message(help);
     }
@@ -920,13 +922,13 @@ async fn run_model_selection(
 
             for provider_name in &collection.inline_fallback_providers {
                 output.line(format!(
-                    "Secure storage could not be verified for {}. Saved the API key in llm.toml instead.",
+                    "Could not verify secure storage for {}. Saved the API key in llm.toml instead.",
                     provider_name
                 ));
             }
 
             for warning in &collection.warnings {
-                output.line(format!("[warn] {warning}"));
+                output.line(format!("Note: {warning}"));
             }
 
             if collection.candidates.is_empty() {
@@ -973,7 +975,8 @@ async fn collect_model_selection_candidates(
                 .push(provider.name.clone());
         }
 
-        let progress = output.start_progress(format!("Loading models from {}", provider.name));
+        let progress =
+            output.start_progress(format!("Loading available models from {}", provider.name));
         let provider_client = match build_provider(provider) {
             Ok(provider_client) => provider_client,
             Err(error) => {
@@ -1030,8 +1033,8 @@ fn select_model_candidate(
 ) -> Result<ModelSelectionCandidate, TnavError> {
     let options = model_selection_options(candidates, active_provider_name);
     let selected = select_option(
-        "Model:",
-        "Choose a model from any configured provider. Selecting one also switches the active provider.",
+        "Choose a model:",
+        "Pick a model from any saved provider. This also makes that provider active.",
         options,
     )?;
     let index = selected
@@ -1057,13 +1060,13 @@ fn model_selection_options(
         .enumerate()
         .map(|(index, candidate)| {
             let mut label = format!(
-                "{} - {} [{}]",
+                "{} | {} [{}]",
                 candidate.model,
                 candidate.provider_name,
                 candidate.provider.value()
             );
             if active_provider_name == Some(candidate.provider_name.as_str()) {
-                label.push_str(" (Connected)");
+                label.push_str(" | active");
             }
 
             PromptOption::new(index.to_string(), label)
@@ -1074,7 +1077,7 @@ fn model_selection_options(
 fn model_selection_provider_label(config: &ConfiguredProvider, active: bool) -> String {
     let mut label = format!("{} [{}]", config.name, config.provider.value());
     if active {
-        label.push_str(" (Connected)");
+        label.push_str(" | active");
     }
 
     label
@@ -1143,8 +1146,8 @@ async fn ensure_ready_for_interactive_prompt(
     let mut actions = interactive_setup_actions(config.as_ref());
 
     if actions.needs_connect {
-        output.red_box("No LLM provider is configured yet.");
-        output.line("Starting `tnav connect` setup...");
+        output.box_message("No LLM provider is set up yet.");
+        output.line("We'll start guided `tnav connect` setup first.");
         run_connect(global).await?;
         config = load_llm_config()
             .map_err(map_llm_config_error)?
@@ -1157,8 +1160,8 @@ async fn ensure_ready_for_interactive_prompt(
     })?;
 
     if actions.needs_model {
-        output.red_box("No LLM model is selected yet.");
-        output.line("Starting `tnav model` setup...");
+        output.box_message("No model is selected yet.");
+        output.line("We'll start guided `tnav model` setup next.");
         run_model_selection(global, Some("")).await?;
         let config = load_llm_config()
             .map_err(map_llm_config_error)?
@@ -1250,9 +1253,9 @@ fn build_llm_request_prompt(question: &str, context: &RuntimeContext) -> String 
 fn command_request_prompt_message(provider: &ConfiguredProvider) -> String {
     let model = provider.model.trim();
     if model.is_empty() {
-        "Prompt:".to_owned()
+        "Ask tnav:".to_owned()
     } else {
-        format!("Prompt ({model}):")
+        format!("Ask tnav ({model}):")
     }
 }
 
@@ -1458,15 +1461,13 @@ fn map_secret_store_error(error: crate::secrets::SecretStoreError) -> TnavError 
 
 #[cfg(test)]
 mod tests {
-    use inquire::PasswordDisplayMode;
-
     use crate::llm::{ConfiguredProvider, DEFAULT_PROVIDER_TIMEOUT_SECS, LlmConfig, Provider};
     use crate::secrets::{MemorySecretStore, SecretKind, SecretStore};
     use crate::ui::{PromptOption, ScriptedPromptService};
 
     use super::{
         ApiKeyPersistence, ConnectSelection, InteractiveSetupActions, ModelSelectionCandidate,
-        RuntimeContext, api_key_password_prompt, apply_model_selection, build_llm_request_prompt,
+        RuntimeContext, apply_model_selection, build_llm_request_prompt,
         command_request_prompt_message, connect_menu_options,
         ensure_api_key_available_for_model_selection, interactive_setup_actions,
         model_selection_options, parse_connect_selection, parse_linux_os_release,
@@ -1622,7 +1623,7 @@ mod tests {
 
         let message = command_request_prompt_message(&provider);
 
-        assert_eq!(message, "Prompt (glm-4.5-air):");
+        assert_eq!(message, "Ask tnav (glm-4.5-air):");
     }
 
     #[test]
@@ -1631,7 +1632,7 @@ mod tests {
 
         let message = command_request_prompt_message(&provider);
 
-        assert_eq!(message, "Prompt:");
+        assert_eq!(message, "Ask tnav:");
     }
 
     #[test]
@@ -1664,7 +1665,7 @@ mod tests {
         assert_eq!(options[0].value(), "manage:compat-a");
         assert_eq!(
             options[0].label(),
-            "Manage compat-a [openai-compatible] (Connected) [No model]"
+            "Manage compat-a [openai-compatible] | active | no model selected"
         );
         assert_eq!(options[1].value(), "add:ollama");
         assert_eq!(options[2].value(), "add:openai");
@@ -1842,10 +1843,10 @@ mod tests {
 
         assert_eq!(options.len(), 2);
         assert_eq!(options[0].value(), "0");
-        assert_eq!(options[0].label(), "qwen3.5:9b - ollama-1 [ollama]");
+        assert_eq!(options[0].label(), "qwen3.5:9b | ollama-1 [ollama]");
         assert_eq!(
             options[1].label(),
-            "gpt-4.1-mini - openai-1 [openai] (Connected)"
+            "gpt-4.1-mini | openai-1 [openai] | active"
         );
     }
 
@@ -1877,14 +1878,5 @@ mod tests {
                 .model,
             "qwen3.5:9b"
         );
-    }
-
-    #[test]
-    fn ask_api_key_prompt_masks_input_and_allows_reveal_toggle() {
-        let prompt = api_key_password_prompt("API key:");
-
-        assert_eq!(prompt.display_mode, PasswordDisplayMode::Masked);
-        assert!(prompt.enable_display_toggle);
-        assert!(!prompt.enable_confirmation);
     }
 }

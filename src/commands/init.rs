@@ -37,8 +37,9 @@ pub async fn run(global: &GlobalArgs) -> Result<(), TnavError> {
         .or(Some("default"));
 
     if !output.is_json() {
-        output.line("tnav init");
-        output.line("Guided setup for your first working profile.");
+        output.green_heading("Guided profile setup");
+        output.line("Answer a few questions to save a profile for API key or OAuth sign-in.");
+        output.line("");
     }
 
     let mut prompts = InquirePromptService::new();
@@ -83,16 +84,16 @@ pub async fn run(global: &GlobalArgs) -> Result<(), TnavError> {
         });
     }
 
-    output.line(format!("Saved config to {}", config_path.display()));
+    output.line(format!("Saved profile config to {}", config_path.display()));
     for line in result.summary_lines {
         output.line(format!("- {line}"));
     }
     if let Some(api_key_preview) = api_key_preview {
-        output.line(format!("Stored API key securely as {api_key_preview}"));
+        output.line(format!("Stored the API key securely as {api_key_preview}"));
     }
     if auth_method == "oauth" {
         output.line(format!(
-            "Next step: run 'tnav --profile {} auth login' to finish OAuth sign-in.",
+            "Next: run 'tnav --profile {} auth login' to finish OAuth sign-in.",
             result.profile_name
         ));
     }

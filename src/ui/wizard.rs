@@ -1,9 +1,7 @@
-use inquire::{Confirm, Select, Text};
-
 use crate::config::{AuthMethod, ProfileConfig, UiConfig};
 use crate::ui::{
     PromptError, PromptOption, PromptService, multiselect_scopes, prompt_api_key,
-    prompt_profile_name, select_provider,
+    prompt_profile_name, select_provider, styled_confirm, styled_select, styled_text,
 };
 
 #[derive(Debug, Clone)]
@@ -40,7 +38,10 @@ where
                 (
                     profile,
                     Some(api_key),
-                    vec![format!("configured API key profile for {provider_label}")],
+                    vec![
+                        "Sign-in: API key".to_owned(),
+                        format!("Provider: {provider_label}"),
+                    ],
                 )
             }
             InitAuthChoice::OAuth => {
@@ -48,7 +49,10 @@ where
                 (
                     profile,
                     None,
-                    vec![format!("configured OAuth profile for {provider_label}")],
+                    vec![
+                        "Sign-in: OAuth".to_owned(),
+                        format!("Provider: {provider_label}"),
+                    ],
                 )
             }
             InitAuthChoice::Both => {
@@ -58,14 +62,15 @@ where
                     profile,
                     Some(api_key),
                     vec![
-                        format!("configured OAuth profile for {provider_label}"),
-                        "captured an API key to store separately in the secret store".to_owned(),
+                        "Sign-in: OAuth + API key".to_owned(),
+                        format!("Provider: {provider_label}"),
+                        "API key: will be stored separately in secure storage".to_owned(),
                     ],
                 )
             }
         };
 
-        summary_lines.push(format!("saved profile name: {profile_name}"));
+        summary_lines.push(format!("Profile: {profile_name}"));
 
         Ok(InitWizardResult {
             profile_name,
@@ -101,7 +106,7 @@ where
             _ => {
                 let provider_name = prompt_required_text(
                     "Provider name:",
-                    Some("Enter a short provider identifier for this API key profile."),
+                    Some("Choose the provider name tnav should save for this API key profile."),
                     None,
                 )?;
                 let base_url = prompt_optional_text(
@@ -150,7 +155,7 @@ where
     fn configure_github_oauth_profile(&mut self) -> Result<(ProfileConfig, String), PromptError> {
         let client_id = prompt_required_text(
             "OAuth client ID:",
-            Some("Create a GitHub OAuth app and paste the public client ID here."),
+            Some("Paste the public client ID from your GitHub OAuth app."),
             None,
         )?;
         let default_scopes = multiselect_scopes(
@@ -164,9 +169,9 @@ where
             &["repo".to_owned(), "read:user".to_owned()],
         )?;
         let open_browser_automatically = prompt_confirm(
-            "Open the browser automatically during login?",
+            "Open the browser automatically during sign-in?",
             true,
-            Some("If disabled, tnav prints the authorization URL and waits for the callback."),
+            Some("If turned off, tnav prints the sign-in URL and waits for the local callback."),
         )?;
 
         Ok((
@@ -192,12 +197,12 @@ where
     fn configure_custom_oauth_profile(&mut self) -> Result<(ProfileConfig, String), PromptError> {
         let provider_name = prompt_required_text(
             "Provider name:",
-            Some("Use a stable name that you want to keep in config."),
+            Some("Choose the provider name you want tnav to keep in config."),
             None,
         )?;
         let base_url = prompt_optional_text(
             "Base URL (optional):",
-            Some("Leave blank if the provider only needs OAuth endpoints."),
+            Some("Leave blank if the provider only needs its OAuth endpoint URLs."),
             None,
         )?;
         let client_id = prompt_required_text(
@@ -222,12 +227,12 @@ where
         )?;
         let scope_text = prompt_optional_text(
             "Default scopes (comma-separated, optional):",
-            Some("Example: read,write,offline_access"),
+            Some("Example: read, write, offline_access"),
             None,
         )?;
         let redirect_host = prompt_required_text(
             "Redirect host:",
-            Some("Loopback hosts only, such as 127.0.0.1 or ::1."),
+            Some("Use a loopback host such as 127.0.0.1, localhost, or ::1."),
             Some("127.0.0.1"),
         )?;
         let redirect_path = prompt_required_text(
@@ -236,9 +241,9 @@ where
             Some("/oauth/callback"),
         )?;
         let open_browser_automatically = prompt_confirm(
-            "Open the browser automatically during login?",
+            "Open the browser automatically during sign-in?",
             true,
-            Some("If disabled, tnav prints the authorization URL and waits for the callback."),
+            Some("If turned off, tnav prints the sign-in URL and waits for the local callback."),
         )?;
 
         Ok((
@@ -273,8 +278,8 @@ impl std::fmt::Display for InitAuthChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ApiKey => f.write_str("API key"),
-            Self::OAuth => f.write_str("OAuth login"),
-            Self::Both => f.write_str("Both (OAuth + API key)"),
+            Self::OAuth => f.write_str("OAuth sign-in"),
+            Self::Both => f.write_str("OAuth sign-in + API key"),
         }
     }
 }
@@ -282,15 +287,15 @@ impl std::fmt::Display for InitAuthChoice {
 fn select_auth_choice() -> Result<InitAuthChoice, PromptError> {
     map_prompt_result(
         "auth choice",
-        Select::new(
-            "Authentication setup:",
+        styled_select(
+            "How should this profile sign in?",
             vec![
                 InitAuthChoice::ApiKey,
                 InitAuthChoice::OAuth,
                 InitAuthChoice::Both,
             ],
         )
-        .with_help_message("Choose the authentication path to configure during init.")
+        .with_help_message("Choose the sign-in method you want this profile to use.")
         .without_filtering()
         .prompt(),
     )
@@ -337,7 +342,7 @@ fn prompt_confirm(
     default: bool,
     help: Option<&'static str>,
 ) -> Result<bool, PromptError> {
-    let mut prompt = Confirm::new(message).with_default(default);
+    let mut prompt = styled_confirm(message).with_default(default);
     if let Some(help) = help {
         prompt = prompt.with_help_message(help);
     }
@@ -348,8 +353,8 @@ fn text_prompt<'a>(
     message: &'static str,
     help: Option<&'static str>,
     default: Option<&'a str>,
-) -> Text<'a, 'a> {
-    let mut prompt = Text::new(message);
+) -> inquire::Text<'a, 'a> {
+    let mut prompt = styled_text(message);
     if let Some(help) = help {
         prompt = prompt.with_help_message(help);
     }

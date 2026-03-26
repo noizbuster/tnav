@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use serde::Serialize;
+use unicode_width::UnicodeWidthChar;
 
 use crate::cli::GlobalArgs;
 use crate::errors::TnavError;
@@ -16,6 +17,7 @@ const ANSI_GREEN: &str = "\x1b[32m";
 const ANSI_CYAN: &str = "\x1b[36m";
 const ANSI_YELLOW: &str = "\x1b[33m";
 const ANSI_RESET: &str = "\x1b[0m";
+const TAB_STOP_WIDTH: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Output {
@@ -70,11 +72,22 @@ impl Output {
     }
 
     pub fn command_preview(&self, command: impl AsRef<str>) -> usize {
+        self.command_preview_with_notice(command, None)
+    }
+
+    pub fn command_preview_with_notice(
+        &self,
+        command: impl AsRef<str>,
+        notice: Option<&str>,
+    ) -> usize {
         if self.quiet {
             return 0;
         }
 
-        let rendered = render_command_preview(command.as_ref());
+        let rendered = match notice {
+            Some(notice) => render_command_preview_with_notice(command.as_ref(), Some(notice)),
+            None => render_command_preview(command.as_ref()),
+        };
         let line_count = rendered.lines().count();
         println!("{rendered}");
         line_count
@@ -113,7 +126,7 @@ impl Output {
         if self.json {
             println!("{}", message.as_ref());
         } else {
-            println!("{color}{}{ANSI_RESET}", message.as_ref());
+            println!("{color}{}{ANSI_RESET}", format_heading(message.as_ref()));
         }
     }
 }
@@ -168,48 +181,141 @@ impl Drop for ProgressHandle {
 
 fn format_box(message: &str) -> String {
     let lines = message.lines().collect::<Vec<_>>();
-    let width = lines.iter().map(|line| line.len()).max().unwrap_or(0);
+    let width = lines
+        .iter()
+        .map(|line| visible_width(line))
+        .max()
+        .unwrap_or(0);
     let border = format!("+{}+", "-".repeat(width + 2));
 
     let mut rendered = Vec::with_capacity(lines.len() + 2);
     rendered.push(border.clone());
     for line in lines {
-        rendered.push(format!("| {:width$} |", line, width = width));
+        rendered.push(render_box_line(line, width));
     }
     rendered.push(border);
 
     rendered.join("\n")
 }
 
+fn format_heading(message: &str) -> String {
+    format!("== {message} ==")
+}
+
 fn render_command_preview(command: &str) -> String {
+    render_command_preview_with_notice(command, None)
+}
+
+fn render_command_preview_with_notice(command: &str, notice: Option<&str>) -> String {
     let lines = if command.is_empty() {
         vec![""]
     } else {
         command.lines().collect::<Vec<_>>()
     };
-    let rule_width = lines
+    let notice_lines = notice
+        .map(|message| message.lines().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let width = lines
         .iter()
-        .map(|line| line.len())
+        .chain(notice_lines.iter())
+        .map(|line| visible_width(line))
         .max()
         .unwrap_or(0)
+        .max(visible_width("Command preview"))
         .max(24);
-    let rule = "-".repeat(rule_width);
+    let border = format!("+{}+", "-".repeat(width + 2));
 
-    let mut rendered = Vec::with_capacity(lines.len() + 2);
-    rendered.push(rule.clone());
+    let mut rendered = Vec::with_capacity(lines.len() + notice_lines.len() + 4);
+    rendered.push(border.clone());
+    rendered.push(render_box_line("Command preview", width));
     rendered.extend(
-        lines
+        notice_lines
             .into_iter()
-            .map(|line| format!("{ANSI_CYAN}{line}{ANSI_RESET}")),
+            .map(|line| render_box_line(line, width)),
     );
-    rendered.push(rule);
+    rendered.push(border.clone());
+    rendered.extend(lines.into_iter().map(|line| {
+        let padded = pad_to_visible_width(&expand_tabs(line), width);
+        format!("| {ANSI_CYAN}{padded}{ANSI_RESET} |")
+    }));
+    rendered.push(border);
 
     rendered.join("\n")
 }
 
+fn render_box_line(line: &str, width: usize) -> String {
+    let padded = pad_to_visible_width(&expand_tabs(line), width);
+    format!("| {padded} |")
+}
+
+fn pad_to_visible_width(line: &str, width: usize) -> String {
+    let padding = width.saturating_sub(visible_width(line));
+    format!("{line}{}", " ".repeat(padding))
+}
+
+fn expand_tabs(line: &str) -> String {
+    let mut expanded = String::new();
+    let mut width = 0usize;
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\t' => {
+                let tab_width = TAB_STOP_WIDTH - (width % TAB_STOP_WIDTH);
+                expanded.push_str(&" ".repeat(tab_width));
+                width += tab_width;
+            }
+            '\u{1b}' if matches!(chars.peek(), Some('[')) => {
+                expanded.push(ch);
+                expanded.push(chars.next().expect("CSI introducer"));
+                for next in chars.by_ref() {
+                    expanded.push(next);
+                    if matches!(next, '\u{40}'..='\u{7e}') {
+                        break;
+                    }
+                }
+            }
+            _ => {
+                expanded.push(ch);
+                width += UnicodeWidthChar::width(ch).unwrap_or(0);
+            }
+        }
+    }
+
+    expanded
+}
+
+fn visible_width(line: &str) -> usize {
+    let mut width = 0usize;
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\t' => {
+                let tab_width = TAB_STOP_WIDTH - (width % TAB_STOP_WIDTH);
+                width += tab_width;
+            }
+            '\u{1b}' if matches!(chars.peek(), Some('[')) => {
+                chars.next();
+                for next in chars.by_ref() {
+                    if matches!(next, '\u{40}'..='\u{7e}') {
+                        break;
+                    }
+                }
+            }
+            _ => width += UnicodeWidthChar::width(ch).unwrap_or(0),
+        }
+    }
+
+    width
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ANSI_CYAN, ANSI_RESET, format_box, render_command_preview};
+    use super::{
+        ANSI_CYAN, ANSI_RESET, expand_tabs, format_box, format_heading, pad_to_visible_width,
+        render_command_preview, render_command_preview_with_notice, visible_width,
+    };
 
     #[test]
     fn format_box_wraps_single_line_message() {
@@ -242,14 +348,76 @@ mod tests {
     }
 
     #[test]
-    fn render_command_preview_uses_rules_and_colored_lines() {
+    fn format_heading_wraps_sections_consistently() {
+        assert_eq!(format_heading("Saved providers"), "== Saved providers ==");
+    }
+
+    #[test]
+    fn render_command_preview_uses_a_titled_box_and_colored_lines() {
         let rendered = render_command_preview("pwd\nls");
 
         assert_eq!(
             rendered,
             format!(
-                "------------------------\n{ANSI_CYAN}pwd{ANSI_RESET}\n{ANSI_CYAN}ls{ANSI_RESET}\n------------------------"
+                "+--------------------------+\n| Command preview          |\n+--------------------------+\n| {ANSI_CYAN}pwd                     {ANSI_RESET} |\n| {ANSI_CYAN}ls                      {ANSI_RESET} |\n+--------------------------+"
             )
         );
+    }
+
+    #[test]
+    fn render_command_preview_places_notice_inside_the_preview_box() {
+        let notice = "Reusing the saved response from history.";
+        let rendered = render_command_preview_with_notice("pwd", Some(notice));
+        let lines = rendered.lines().collect::<Vec<_>>();
+
+        assert!(lines[1].starts_with("| Command preview"));
+        assert_eq!(lines[2], "| Reusing the saved response from history. |");
+        assert!(!rendered.starts_with(notice));
+    }
+
+    #[test]
+    fn visible_width_ignores_ansi_sequences_and_expands_tabs() {
+        let styled = format!("{ANSI_CYAN}\talpha{ANSI_RESET}");
+
+        assert_eq!(visible_width(&styled), 13);
+    }
+
+    #[test]
+    fn expand_tabs_and_padding_align_tabbed_lines_for_terminal_output() {
+        let padded = pad_to_visible_width(&expand_tabs("\talpha"), 16);
+
+        assert_eq!(visible_width(&padded), 16);
+        assert!(padded.starts_with("        alpha"));
+    }
+
+    #[test]
+    fn render_command_preview_keeps_borders_aligned_for_tabbed_lines() {
+        let rendered = render_command_preview("printf 'name\tcount\\n'\n\tawk '{print $1}'");
+        let border_width = visible_width(rendered.lines().next().expect("top border"));
+
+        for line in rendered.lines() {
+            assert_eq!(visible_width(&strip_ansi(line)), border_width);
+        }
+    }
+
+    fn strip_ansi(text: &str) -> String {
+        let mut stripped = String::new();
+        let mut chars = text.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' && matches!(chars.peek(), Some('[')) {
+                chars.next();
+                for next in chars.by_ref() {
+                    if matches!(next, '\u{40}'..='\u{7e}') {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            stripped.push(ch);
+        }
+
+        stripped
     }
 }
