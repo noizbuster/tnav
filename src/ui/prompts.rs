@@ -96,6 +96,7 @@ pub trait PromptService {
     ) -> PromptResult<Vec<String>>;
     fn confirm_overwrite(&mut self, target: &str) -> PromptResult<bool>;
     fn confirm_execute_command(&mut self, command: &str) -> PromptResult<ConfirmResult>;
+    fn confirm_use_cached_response(&mut self, cached_command: &str) -> PromptResult<bool>;
     fn edit_command(&mut self, command: &str) -> PromptResult<String>;
 }
 
@@ -149,6 +150,13 @@ pub fn confirm_execute_command(
     command: &str,
 ) -> PromptResult<ConfirmResult> {
     prompts.confirm_execute_command(command)
+}
+
+pub fn confirm_use_cached_response(
+    prompts: &mut impl PromptService,
+    cached_command: &str,
+) -> PromptResult<bool> {
+    prompts.confirm_use_cached_response(cached_command)
 }
 
 pub fn edit_command(prompts: &mut impl PromptService, command: &str) -> PromptResult<String> {
@@ -320,6 +328,16 @@ impl PromptService for InquirePromptService {
         map_prompt_result("command confirmation", prompt.prompt())
     }
 
+    fn confirm_use_cached_response(&mut self, cached_command: &str) -> PromptResult<bool> {
+        let message = "Found a cached response for this prompt. Use it?";
+        let help_message = format!("Cached: {cached_command}");
+        let prompt = styled_confirm(message)
+            .with_default(true)
+            .with_help_message(&help_message);
+
+        map_prompt_result("cache confirmation", prompt.prompt())
+    }
+
     fn edit_command(&mut self, command: &str) -> PromptResult<String> {
         edit_command_in_editor(command)
     }
@@ -343,6 +361,7 @@ pub struct ScriptedPromptService {
     scope_sets: VecDeque<PromptResult<Vec<String>>>,
     overwrite_decisions: VecDeque<PromptResult<bool>>,
     command_confirmations: VecDeque<PromptResult<ConfirmResult>>,
+    cached_response_decisions: VecDeque<PromptResult<bool>>,
     edited_commands: VecDeque<PromptResult<String>>,
 }
 
@@ -388,6 +407,11 @@ impl ScriptedPromptService {
 
     pub fn push_command_confirmation(&mut self, value: PromptResult<ConfirmResult>) -> &mut Self {
         self.command_confirmations.push_back(value);
+        self
+    }
+
+    pub fn push_cached_response_decision(&mut self, value: PromptResult<bool>) -> &mut Self {
+        self.cached_response_decisions.push_back(value);
         self
     }
 
@@ -489,6 +513,10 @@ impl PromptService for ScriptedPromptService {
 
     fn confirm_execute_command(&mut self, _command: &str) -> PromptResult<ConfirmResult> {
         Self::next(&mut self.command_confirmations, "command confirmation")
+    }
+
+    fn confirm_use_cached_response(&mut self, _cached_command: &str) -> PromptResult<bool> {
+        Self::next(&mut self.cached_response_decisions, "cache confirmation")
     }
 
     fn edit_command(&mut self, _command: &str) -> PromptResult<String> {

@@ -50,7 +50,24 @@ pub async fn run(global: &GlobalArgs, question: Option<&str>) -> Result<(), Tnav
     let history_store = load_history(&profile)?;
 
     let (question, cached_response) = match question {
-        Some(question) => (question.to_owned(), None),
+        Some(question) => {
+            let question = question.to_owned();
+            let mut cached = history_store
+                .entries
+                .iter()
+                .find(|entry| entry.prompt == question)
+                .map(|entry| entry.response.clone());
+
+            if let Some(cached_command) = cached.as_ref() {
+                let use_cached = prompts
+                    .confirm_use_cached_response(cached_command)
+                    .map_err(map_prompt_error)?;
+                if !use_cached {
+                    cached = None;
+                }
+            }
+            (question, cached)
+        }
         None if global.non_interactive => {
             return Err(TnavError::InvalidInput {
                 message:
